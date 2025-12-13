@@ -12,7 +12,7 @@ from models.album import Album
 from models.download_queue import DownloadQueue
 from models.playlist import Playlist
 from models.track import Track
-from services.download_service import DownloadService, ProgressCallback
+from services.download_service import DownloadService
 from services.search_service import SearchService
 
 logger = logging.getLogger(__name__)
@@ -76,39 +76,32 @@ class AppController:
     def clear_queue(self) -> None:
         self._queue.clear()
 
-    def download_queue(self, callbacks: DownloadCallbacks | None = None) -> None:
-        tracks = self._queue.all_tracks()
-        if not tracks:
-            return
-        callbacks = callbacks or DownloadCallbacks()
-        total = len(tracks)
-        completed = 0
-        worker_id = 0
-        for track in tracks:
-            if callbacks.is_cancelled and callbacks.is_cancelled():
-                break
+    def _download_single_track(
+        self,
+        track: Track,
+        destination: Path,
+        callbacks: DownloadCallbacks,
+        worker_id: int,
+        current_completed: int,
+        total: int,
+    ) -> None:
+        """Download a single track with callbacks."""
+        if callbacks.track_started:
+            callbacks.track_started(track, current_completed, total, worker_id)
 
-            if callbacks.track_started:
-                callbacks.track_started(track, completed, total, worker_id)
+        def progress_wrapper(downloaded: int, total_bytes: int) -> None:
+            if callbacks.track_progress:
+                callbacks.track_progress(downloaded, total_bytes, worker_id)
 
-            def progress_wrapper(downloaded: int, total_bytes: int) -> None:
-                if callbacks.track_progress:
-                    callbacks.track_progress(downloaded, total_bytes, worker_id)
-
-            # noinspection PyBroadException
-            try:
-                self._download_service.download_track(
-                    track,
-                    self._download_dir,
-                    progress_callback=progress_wrapper,
-                )
-            except Exception:
-                logger.exception("failed to download track %s", track.title)
-            finally:
-                completed += 1
-                if callbacks.track_completed:
-                    callbacks.track_completed(completed, total, worker_id)
-        self._queue.clear()
+        # noinspection PyBroadException
+        try:
+            self._download_service.download_track(
+                track,
+                destination,
+                progress_callback=progress_wrapper,
+            )
+        except Exception:
+            logger.exception("failed to download track %s", track.title)
 
     def download_tracks_parallel(
         self,
@@ -144,24 +137,10 @@ class AppController:
                 worker_id_counter += 1
                 current_completed = completed
 
-            # notify track started
-            if callbacks.track_started:
-                callbacks.track_started(track, current_completed, total, worker_id)
-
-            # dl the track with progress callback that includes worker_id
-            def progress_wrapper(downloaded: int, total_bytes: int) -> None:
-                if callbacks.track_progress:
-                    callbacks.track_progress(downloaded, total_bytes, worker_id)
-
-            # noinspection PyBroadException
-            try:
-                self._download_service.download_track(
-                    track,
-                    destination,
-                    progress_callback=progress_wrapper,
-                )
-            except Exception:
-                logger.exception("failed to download track %s", track.title)
+            # Download the track
+            self._download_single_track(
+                track, destination, callbacks, worker_id, current_completed, total
+            )
 
             # notify track completed
             with lock:

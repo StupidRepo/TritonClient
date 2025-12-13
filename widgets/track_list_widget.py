@@ -6,8 +6,9 @@ from PySide6.QtWidgets import QListWidget, QListWidgetItem
 
 from models.track import Track
 from widgets.album_track_item import AlbumTrackItem
+from widgets.base_list_widget import BaseListWidget
 
-class TrackListWidget(QListWidget):
+class TrackListWidget(BaseListWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
@@ -25,16 +26,6 @@ class TrackListWidget(QListWidget):
             self.setItemWidget(item, widget)
         self._sync_item_widget_selection()
 
-    def selectionChanged(self, selected, deselected) -> None:
-        super().selectionChanged(selected, deselected)
-        self._sync_item_widget_selection()
-
-    def _sync_item_widget_selection(self) -> None:
-        for index in range(self.count()):
-            item = self.item(index)
-            widget = self.itemWidget(item)
-            if widget and hasattr(widget, "set_selected_state"):
-                widget.set_selected_state(item.isSelected())
 
     def selected_track(self) -> Track | None:
         item = self.currentItem()

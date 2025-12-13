@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from models.track import Track
+from utils.payload_helpers import extract_artist_names
 
 
 @dataclass
@@ -22,6 +23,12 @@ class Playlist:
     # if one field can't be found, assume it's detailed /playlist/?id=... structure, and look under "playlist"
     @classmethod
     def from_search_payload(cls, payload: Dict[str, Any]) -> "Playlist":
+        # Extract featured artists from either direct payload or nested playlist
+        promoted_artists = (
+            extract_artist_names(payload.get("promotedArtists", []))
+            or extract_artist_names(payload.get("playlist", {}).get("promotedArtists", []))
+        )
+
         return cls(
             uuid=(payload.get("uuid") or payload.get("playlist", {}).get("uuid", "")),
             title=(
@@ -41,14 +48,7 @@ class Playlist:
                 payload.get("numberOfTracks")
                 or payload.get("playlist", {}).get("numberOfTracks", 0)
             ),
-            featured_artists=(
-                [artist.get("name") for artist in payload.get("promotedArtists", []) if artist.get("name")]
-                or [
-                    artist.get("name")
-                    for artist in payload.get("playlist", {}).get("promotedArtists", [])
-                    if artist.get("name")
-                ]
-            )
+            featured_artists=promoted_artists,
         )
 
 

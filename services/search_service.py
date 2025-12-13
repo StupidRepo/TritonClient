@@ -47,26 +47,28 @@ class SearchService:
             return [Album.from_search_payload(item) for item in album_items]
         return items
 
-    def fetch_playlist_detail(self, playlist_uuid: str) -> tuple[Playlist, list[Track]]:
+    def _fetch_detail_payload(self, url: str, item_id: str, item_type: str) -> dict:
+        """Fetch detail payload with error handling."""
         try:
-            resp = requests.get(f"{self.PLAYLIST_DETAILS_URL}/?id={playlist_uuid}", timeout=10)
+            resp = requests.get(f"{url}/?id={item_id}", timeout=10)
             resp.raise_for_status()
+            return resp.json()
         except requests.RequestException as exc:
-            logger.warning("playlist detail fetch failed for %s", playlist_uuid, exc_info=exc)
+            logger.warning("%s detail fetch failed for %s", item_type, item_id, exc_info=exc)
+            return {}
+
+    def fetch_playlist_detail(self, playlist_uuid: str) -> tuple[Playlist, list[Track]]:
+        payload = self._fetch_detail_payload(self.PLAYLIST_DETAILS_URL, playlist_uuid, "playlist")
+        if not payload:
             return Playlist(playlist_uuid, "", "", 0, None, 0, []), []
-        payload = resp.json()
         playlist = Playlist.from_search_payload(payload)
         tracks = [PlaylistTrack.from_detail_payload(item).track for item in payload.get("items", [])]
         return playlist, tracks
 
     def fetch_album_detail(self, album_id: str) -> tuple[Album, list[Track]]:
-        try:
-            resp = requests.get(f"{self.ALBUM_DETAILS_URL}/?id={album_id}", timeout=10)
-            resp.raise_for_status()
-        except requests.RequestException as exc:
-            logger.warning("album detail fetch failed for %s", album_id, exc_info=exc)
+        payload = self._fetch_detail_payload(self.ALBUM_DETAILS_URL, album_id, "album")
+        if not payload:
             return Album(album_id, "", 0, None, 0, "", [], False), []
-        payload = resp.json()
         data = payload.get("data", {})
         items = data.get("items", [])
 

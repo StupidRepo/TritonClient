@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from utils.payload_helpers import extract_artist_names
+
 
 @dataclass
 class Track:
@@ -16,7 +18,7 @@ class Track:
 
     @classmethod
     def from_payload(cls, payload: Dict[str, Any]) -> "Track":
-        artists = [artist.get("name") for artist in payload.get("artists", []) if artist.get("name")]
+        artists = extract_artist_names(payload.get("artists", []))
         album = payload.get("album", {})
         cover_id = album.get("cover")
         track_id = payload.get("id")

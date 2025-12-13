@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from utils.payload_helpers import extract_artist_names, safe_str_id
+
 
 @dataclass
 class Album:
@@ -18,11 +20,11 @@ class Album:
     @classmethod
     def from_search_payload(cls, payload: Dict[str, Any]) -> "Album":
         """Parse album from search results"""
-        artists = [artist.get("name") for artist in payload.get("artists", []) if artist.get("name")]
-        album_id = payload.get("id")
+        artists = extract_artist_names(payload.get("artists", []))
+        album_id = safe_str_id(payload.get("id"))
 
         return cls(
-            album_id=str(album_id) if album_id is not None else "",
+            album_id=album_id,
             title=payload.get("title", "Untitled Album"),
             duration=payload.get("duration", 0),
             cover_id=payload.get("cover"),
