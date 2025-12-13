@@ -4,16 +4,16 @@ A (probably) cross-platform PySide6 GUI app for interacting with the [triton.squ
 ## Features
 - [ ] Searching
   - [x] Tracks
-  - [ ] Albums
+  - [x] Albums
   - [ ] Artists
   - [x] Playlists
-- [ ] Playback/Streaming
 - [x] Downloading
     - [x] Tracks
       - [x] Metadata (Tagging)
       - [x] Cover Art
-    - [ ] Albums
-    - [ ] Playlists
+    - [x] Albums
+    - [x] Playlists
+- [ ] Streaming
 
 ## Installation
 1. Clone the repository.
@@ -31,7 +31,7 @@ A (probably) cross-platform PySide6 GUI app for interacting with the [triton.squ
 ## Usage
 1. Launch the application.
 2. Use the search bar to find tracks or playlists.
-3. Switch betweens track/playlist search using the dropdown.
+3. Switch betweens track/playlist/album search using the dropdown.
 4. Click "Search" to display results.
 5. For tracks, click one and press "Add to Queue" or click & drag to select multiple songs.
     - Shift-clicking works too, to select multiple tracks.
@@ -41,11 +41,11 @@ A (probably) cross-platform PySide6 GUI app for interacting with the [triton.squ
 9. Enjoy your music!
 
 ## Notes
-- To download all music in a playlist:
-    1. Find the playlist.
+- To download all music in a playlist/album:
+    1. Find the playlist/album.
     2. Double-click it to open it.
-    3. Click on "Download Playlist".
-    4. Playlist will automatically start downloading to your `Downloads` folder in a subfolder named after the playlist.
+    3. Click on "Download Playlist" or "Download Album".
+    4. Playlist will automatically start downloading to your `Downloads` folder in a subfolder named after the playlist/album.
 - Make sure FFMPEG is correctly installed and accessible via PATH for proper audio processing.
 
 ## Screenshots
