@@ -430,6 +430,8 @@ class DownloadProgressDialog(QDialog):
         # Individual worker progress bars
         self._worker_bars: list[QProgressBar] = []
         self._worker_labels: list[QLabel] = []
+        self._worker_last_progress: list[int] = []  # Track last progress value for each worker
+        self._worker_last_maximum: list[int] = []  # Track last maximum value for each worker
 
         for i in range(MAX_CONCURRENT_DOWNLOADS):
             layout.addWidget(QLabel(f"Worker {i + 1}"))
@@ -444,6 +446,9 @@ class DownloadProgressDialog(QDialog):
             worker_label.setStyleSheet("color: gray;")
             self._worker_labels.append(worker_label)
             layout.addWidget(worker_label)
+
+            self._worker_last_progress.append(0)
+            self._worker_last_maximum.append(1)
 
             if i < MAX_CONCURRENT_DOWNLOADS - 1:
                 layout.addSpacing(5)
@@ -470,11 +475,12 @@ class DownloadProgressDialog(QDialog):
         self._total_label.setText(f"{completed} / {self._total_tracks} downloaded")
         QApplication.processEvents()
 
-    # Thread-safe versions that use QMetaObject.invokeMethod
     # noinspection PyTypeChecker
     def start_track_safe(self, track: Track, worker_id: int) -> None:
         if 0 <= worker_id < len(self._worker_labels):
-            # First reset the progress bar
+            self._worker_last_progress[worker_id] = 0
+            self._worker_last_maximum[worker_id] = 100
+
             QMetaObject.invokeMethod(
                 self._worker_bars[worker_id],
                 "setMaximum",
@@ -487,7 +493,7 @@ class DownloadProgressDialog(QDialog):
                 Qt.ConnectionType.QueuedConnection,
                 Q_ARG(int, 0)
             )
-            # Then update the label
+
             QMetaObject.invokeMethod(
                 self._worker_labels[worker_id],
                 "setText",
@@ -499,22 +505,32 @@ class DownloadProgressDialog(QDialog):
     def report_current_progress_safe(self, downloaded: int, total: int, worker_id: int) -> None:
         if 0 <= worker_id < len(self._worker_bars):
             maximum = max(total, 1)
-            QMetaObject.invokeMethod(
-                self._worker_bars[worker_id],
-                "setMaximum",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(int, maximum)
-            )
-            QMetaObject.invokeMethod(
-                self._worker_bars[worker_id],
-                "setValue",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(int, min(downloaded, maximum))
-            )
+            value = min(downloaded, maximum)
+
+            # only update if progress has moved forward or maximum changed
+            # this prevents flickering from out-of-order updates
+            if (value > self._worker_last_progress[worker_id] or
+                maximum != self._worker_last_maximum[worker_id]):
+
+                self._worker_last_progress[worker_id] = value
+                self._worker_last_maximum[worker_id] = maximum
+
+                QMetaObject.invokeMethod(
+                    self._worker_bars[worker_id],
+                    "setMaximum",
+                    Qt.ConnectionType.QueuedConnection,
+                    Q_ARG(int, maximum)
+                )
+                QMetaObject.invokeMethod(
+                    self._worker_bars[worker_id],
+                    "setValue",
+                    Qt.ConnectionType.QueuedConnection,
+                    Q_ARG(int, value)
+                )
 
     # noinspection PyTypeChecker
     def track_completed_safe(self, completed: int, worker_id: int) -> None:
-        # Update overall progress
+        # update overall progress
         QMetaObject.invokeMethod(
             self._total_bar,
             "setValue",
@@ -528,7 +544,7 @@ class DownloadProgressDialog(QDialog):
             Q_ARG(str, f"{completed} / {self._total_tracks} downloaded")
         )
 
-        # Mark worker as completed (will show 100% progress bar)
+        # mark worker as completed (will show 100% progress bar)
         if 0 <= worker_id < len(self._worker_bars):
             QMetaObject.invokeMethod(
                 self._worker_bars[worker_id],
@@ -537,7 +553,7 @@ class DownloadProgressDialog(QDialog):
                 Q_ARG(int, self._worker_bars[worker_id].maximum())
             )
 
-        # If cancellation was requested, show "Waiting..." for this worker
+        # if cancellation was requested, show "Waiting..." for this worker
         if self._cancelled and 0 <= worker_id < len(self._worker_labels):
             QMetaObject.invokeMethod(
                 self._worker_labels[worker_id],
@@ -545,7 +561,8 @@ class DownloadProgressDialog(QDialog):
                 Qt.ConnectionType.QueuedConnection,
                 Q_ARG(str, "Waiting for other thread(s)...")
             )
-        # If all tracks are done, mark workers as completed
+
+        # if all tracks are done, mark workers as completed
         elif completed >= self._total_tracks:
             for i in range(len(self._worker_labels)):
                 QMetaObject.invokeMethod(
