@@ -38,7 +38,7 @@ class BaseItemWidget(QWidget):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
         )
         text_layout = QVBoxLayout(self._text_container)
-        text_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        text_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         text_layout.setContentsMargins(0, 0, 0, 0)
         text_layout.setSpacing(2)
 
