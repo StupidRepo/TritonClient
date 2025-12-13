@@ -471,6 +471,10 @@ class WorkerProgressWidget(QWidget):
 
         self._title_label = QLabel(f"Worker {worker_id + 1}")
         self._title_label.setStyleSheet("font-weight: bold;")
+        self._title_label.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Maximum
+        )
         layout.addWidget(self._title_label)
 
         self._progress_bar = QProgressBar()
@@ -480,24 +484,28 @@ class WorkerProgressWidget(QWidget):
 
         self._track_label = QLabel("Idle")
         self._track_label.setStyleSheet("color: gray;")
-        # Ensure the label can expand horizontally
+        self._track_label.setWordWrap(True)
         self._track_label.setSizePolicy(
+            QSizePolicy.Policy.MinimumExpanding,
             QSizePolicy.Policy.Minimum,
-            QSizePolicy.Policy.Maximum
         )
+        # align to top
+        self._track_label.setAlignment(Qt.AlignmentFlag.AlignTop)
         layout.addWidget(self._track_label)
 
         self._speed_label = QLabel("")
         self._speed_label.setStyleSheet("color: #666; font-size: 10pt;")
+        self._speed_label.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Maximum
+        )
         layout.addWidget(self._speed_label)
 
         self.setSizePolicy(
             QSizePolicy.Policy.Minimum,
-            QSizePolicy.Policy.Maximum
+            QSizePolicy.Policy.MinimumExpanding
         )
-        layout.setSizeConstraint(
-            QLayout.SizeConstraint.SetFixedSize
-        )
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
 
     @Slot(str)
     def set_track(self, track_text: str) -> None:
@@ -568,11 +576,13 @@ class DownloadProgressDialog(QDialog):
         self._total_tracks = total_tracks
         self._cancelled = False
         self.setSizePolicy(
-            QSizePolicy.Policy.Ignored,
-            QSizePolicy.Policy.Fixed
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Preferred
         )
 
+        self.setSizeGripEnabled(False)
         self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
+        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, False)
 
         layout = QVBoxLayout(self)
 
@@ -598,17 +608,18 @@ class DownloadProgressDialog(QDialog):
             self._workers.append(worker_widget)
             layout.addWidget(worker_widget)
 
-            # after adding each worker, we need to trigger a layout update so that the dialog resizes properly
-            layout.update()
-            self.layout().update()
+            # layout.update()
+            # self.layout().update()
 
             if i < MAX_CONCURRENT_DOWNLOADS - 1:
                 layout.addSpacing(8)
 
-            self.adjustSize()
+            # self.adjustSize()
+            #
+            # layout.activate()
+            # self.layout().activate()
 
-            layout.activate()
-            self.layout().activate()
+        # layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
 
         # Cancel button
         layout.addSpacing(16)
@@ -616,10 +627,18 @@ class DownloadProgressDialog(QDialog):
         self._cancel_button.clicked.connect(self._on_cancel_clicked)
         layout.addWidget(self._cancel_button)
 
-        layout.update()
-        self.layout().update()
-
-        self.adjustSize()
+        # layout.update()
+        # self.layout().update()
+        #
+        # self.adjustSize()
+        # self.setSizePolicy(
+        #     QSizePolicy.Policy.Preferred,
+        #     QSizePolicy.Policy.Minimum
+        # )
+        layout.setSizeConstraints(
+            QLayout.SizeConstraint.SetMinimumSize,
+            QLayout.SizeConstraint.SetFixedSize
+        )
 
     def _on_cancel_clicked(self) -> None:
         self._cancelled = True
