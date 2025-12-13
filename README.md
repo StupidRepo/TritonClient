@@ -20,7 +20,12 @@ A (probably) cross-platform PySide6 GUI app for interacting with the [triton.squ
 2. Create a virtual environment and activate it.
 3. Install the required packages:
    - `pip install -r requirements.txt`
-4. Run the application:
+4. Install FFMPEG.
+   - On Windows, download from [ffmpeg.org](https://ffmpeg.org/download.html) and add to PATH.
+   - On macOS, use Homebrew: `brew install ffmpeg`
+   - On Linux, use your package manager, e.g., `sudo apt install ffmpeg` for Debian-based systems.
+   - For anything else, you're probably capable enough to do some googling.
+5. Run the application:
    - `python main.py`
 
 ## Usage
