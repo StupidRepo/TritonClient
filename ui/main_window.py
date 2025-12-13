@@ -23,10 +23,12 @@ from PySide6.QtWidgets import (
 
 from config import MAX_CONCURRENT_DOWNLOADS
 from controllers.app_controller import AppController, DownloadCallbacks
+from models.album import Album
 from models.playlist import Playlist
 from models.track import Track
 from utils.cover import load_cover_pixmap
 from utils.formatting import format_duration, format_track_listing
+from widgets.album_list_widget import AlbumListWidget
 from widgets.playlist_list_widget import PlaylistListWidget
 from widgets.track_list_widget import TrackListWidget
 
@@ -43,6 +45,8 @@ class MainWindow(QWidget):
         self.controller = AppController()
         self._current_playlist: Playlist | None = None
         self._current_playlist_tracks: list[Track] = []
+        self._current_album: Album | None = None
+        self._current_album_tracks: list[Track] = []
 
         self.dropdown = QComboBox()
         self.dropdown.addItems(self.controller.categories())
@@ -64,6 +68,7 @@ class MainWindow(QWidget):
 
         self.track_list = TrackListWidget()
         self.playlist_list = PlaylistListWidget()
+        self.album_list = AlbumListWidget()
 
         self.playlist_header = PlaylistHeaderWidget()
         self.playlist_tracks = TrackListWidget()
@@ -75,13 +80,25 @@ class MainWindow(QWidget):
         playlist_layout.addWidget(self.playlist_header)
         playlist_layout.addWidget(self.playlist_tracks)
 
+        self.album_header = AlbumHeaderWidget()
+        self.album_tracks = TrackListWidget()
+        album_page = QWidget()
+        self.album_page = album_page
+        album_layout = QVBoxLayout(album_page)
+        album_layout.setContentsMargins(0, 0, 0, 0)
+        album_layout.setSpacing(8)
+        album_layout.addWidget(self.album_header)
+        album_layout.addWidget(self.album_tracks)
+
         self.details_stack = QStackedWidget()
         self.details_stack.addWidget(self.track_list)
         self.details_stack.addWidget(self.playlist_list)
         self.details_stack.addWidget(playlist_page)
+        self.details_stack.addWidget(self.album_list)
+        self.details_stack.addWidget(album_page)
         self.details_stack.setCurrentWidget(self.track_list)
 
-        self.notice_label = QLabel("Cannot search this type yet, please try Tracks or Playlists.")
+        self.notice_label = QLabel("Cannot search this type yet, please try Tracks, Albums, or Playlists.")
         self.notice_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.notice_label.setVisible(False)
 
@@ -92,11 +109,14 @@ class MainWindow(QWidget):
 
         self.playlist_list.playlist_activated.connect(self.on_playlist_selected)
         self.playlist_header.download_requested.connect(self.on_download_playlist)
+        self.album_list.album_activated.connect(self.on_album_selected)
+        self.album_header.download_requested.connect(self.on_download_album)
         self.search_button.clicked.connect(self.on_search_clicked)
         self.queue_button.clicked.connect(self.on_queue_selected)
         self.show_queue_button.clicked.connect(self.on_show_queue)
         self.track_list.itemSelectionChanged.connect(self._refresh_add_button_label)
         self.playlist_tracks.itemSelectionChanged.connect(self._refresh_add_button_label)
+        self.album_tracks.itemSelectionChanged.connect(self._refresh_add_button_label)
         self._refresh_add_button_label()
         self._update_queue_label()
 
@@ -106,6 +126,8 @@ class MainWindow(QWidget):
             return self.track_list
         if current_widget is self.playlist_page:
             return self.playlist_tracks
+        if current_widget is self.album_page:
+            return self.album_tracks
         # default to main tracks list when playlists page or others selected
         return self.track_list
 
@@ -181,6 +203,10 @@ class MainWindow(QWidget):
                 self.notice_label.hide()
                 self.details_stack.setCurrentWidget(self.playlist_list)
                 self.playlist_list.load_playlists(results)
+            elif category == "Albums":
+                self.notice_label.hide()
+                self.details_stack.setCurrentWidget(self.album_list)
+                self.album_list.load_albums(results)
             else:
                 self.details_stack.setCurrentWidget(self.track_list)
                 self.track_list.clear()
@@ -271,6 +297,76 @@ class MainWindow(QWidget):
             self.controller.download_tracks_parallel(
                 self._current_playlist_tracks,
                 playlist_dir,
+                DownloadCallbacks(
+                    track_started=_start,
+                    track_progress=_progress,
+                    track_completed=_completed,
+                    is_cancelled=_is_cancelled,
+                ),
+                max_workers=MAX_CONCURRENT_DOWNLOADS,
+            )
+
+        # Create worker thread for downloading
+        worker = DownloadWorker(_download)
+        worker.finished.connect(dialog.accept)
+
+        dialog.show()
+        worker.start()
+        dialog.exec()  # Block until dialog is closed
+
+    @Slot(Album)
+    def on_album_selected(self, album: Album) -> None:
+        try:
+            detail, tracks = self.controller.fetch_album_detail(album.album_id)
+            self._current_album = detail
+            self._current_album_tracks = tracks
+            self.album_header.render(detail)
+            self.details_stack.setCurrentWidget(self.album_page)
+            self.album_tracks.setVisible(True)
+            self.album_tracks.load_tracks(tracks)
+        except Exception as e:
+            print(e)
+            QMessageBox.critical(
+                self,
+                "Album Error",
+                f"Failed to fetch album details:\n{str(e)}"
+            )
+
+    @Slot()
+    def on_download_album(self) -> None:
+        if not self._current_album or not self._current_album_tracks:
+            return
+
+        # Create a subdirectory for the album
+        import re
+
+        # Sanitize album title for use as a directory name
+        safe_title = re.sub(r'[\\/:*?"<>|]+', '', self._current_album.title).strip()
+        if not safe_title:
+            safe_title = "Album"
+
+        album_dir = self.controller.download_dir / safe_title
+
+        # Show progress dialog
+        dialog = DownloadProgressDialog(total_tracks=len(self._current_album_tracks), parent=self)
+
+        # Download tracks in parallel
+        def _start(track: Track, completed: int, total: int, worker_id: int) -> None:
+            dialog.start_track_safe(track, worker_id)
+
+        def _progress(downloaded: int, total: int, worker_id: int) -> None:
+            dialog.report_current_progress_safe(downloaded, total, worker_id)
+
+        def _completed(done: int, total: int, worker_id: int) -> None:
+            dialog.track_completed_safe(done, worker_id)
+
+        def _is_cancelled() -> bool:
+            return dialog.is_cancelled()
+
+        def _download():
+            self.controller.download_tracks_parallel(
+                self._current_album_tracks,
+                album_dir,
                 DownloadCallbacks(
                     track_started=_start,
                     track_progress=_progress,
@@ -619,4 +715,55 @@ class PlaylistHeaderWidget(QWidget):
         artists = ", ".join(playlist.featured_artists) if playlist.featured_artists else "various"
         self._meta.setText(f"{playlist.number_of_tracks} tracks • {duration} • {artists}")
         self._desc.setText(playlist.description or "no description")
+
+
+class AlbumHeaderWidget(QWidget):
+    download_requested = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+
+        self._cover = QLabel()
+        self._cover.setFixedSize(160, 160)
+        layout.addWidget(self._cover)
+
+        text_container = QVBoxLayout()
+        text_container.setSpacing(4)
+
+        # hack: set text container to wrap on vertical height so that the cover and text align at top
+        text_container.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        self._title = QLabel("Select an album")
+        self._title.setWordWrap(True)
+        self._title.setStyleSheet("font-weight: bold; font-size: 18pt;")
+
+        self._meta = QLabel()
+        self._meta.setStyleSheet("color: gray;")
+
+        self._artist = QLabel()
+        self._artist.setWordWrap(True)
+
+        self._download_button = QPushButton("Download Album")
+        self._download_button.clicked.connect(self.download_requested.emit)
+
+        text_container.addWidget(self._title)
+        text_container.addWidget(self._meta)
+        text_container.addWidget(self._artist)
+        text_container.addWidget(self._download_button)
+        layout.addLayout(text_container)
+
+    def render(self, album: Album, **kwargs) -> None:
+        pixmap = load_cover_pixmap(album.cover_id, 640, 160)
+        self._cover.setPixmap(pixmap)
+        self._title.setText(album.title)
+        duration = format_duration(album.duration, long=True)
+        self._meta.setText(f"{album.number_of_tracks} tracks • {duration}")
+        artists = ", ".join(album.artists) if album.artists else "Unknown Artist"
+        year = album.release_date.split("-")[0] if album.release_date else ""
+        artist_text = f"{artists}" + (f" • {year}" if year else "")
+        self._artist.setText(artist_text)
+
 

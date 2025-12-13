@@ -8,6 +8,7 @@ from threading import Lock
 from typing import Callable, Iterable, Sequence
 
 from config import MAX_CONCURRENT_DOWNLOADS
+from models.album import Album
 from models.download_queue import DownloadQueue
 from models.playlist import Playlist
 from models.track import Track
@@ -48,11 +49,14 @@ class AppController:
     def categories(self) -> tuple[str, ...]:
         return tuple(self._search_service.available_categories())
 
-    def search(self, category: str, query: str) -> Sequence[Playlist | Track]:
+    def search(self, category: str, query: str) -> Sequence[Playlist | Track | Album]:
         return self._search_service.search(category, query)
 
     def fetch_playlist_detail(self, playlist_uuid: str) -> tuple[Playlist, list[Track]]:
         return self._search_service.fetch_playlist_detail(playlist_uuid)
+
+    def fetch_album_detail(self, album_id: str) -> tuple[Album, list[Track]]:
+        return self._search_service.fetch_album_detail(album_id)
 
     def queue_size(self) -> int:
         return self._queue.size()
