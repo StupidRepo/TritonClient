@@ -533,6 +533,10 @@ class DownloadProgressDialog(QDialog):
         self.setModal(True)
         self._total_tracks = total_tracks
         self._cancelled = False
+        self.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Ignored
+        )
 
         self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
 
@@ -571,8 +575,8 @@ class DownloadProgressDialog(QDialog):
             if i < MAX_CONCURRENT_DOWNLOADS - 1:
                 layout.addSpacing(8)
 
-            layout.update()
-            self.layout().update()
+            layout.activate()
+            self.layout().activate()
 
         # Cancel button
         layout.addSpacing(16)
@@ -583,11 +587,14 @@ class DownloadProgressDialog(QDialog):
             QLayout.SizeConstraint.SetMinimumSize
         )
         self.setSizePolicy(
-            QSizePolicy.Policy.Minimum,
-            QSizePolicy.Policy.Minimum
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Ignored
         )
-        layout.activate()
-        self.update().update()
+        layout.update()
+        self.layout().update()
+
+        # set initial size to fit contents
+        self.adjustSize()
 
     def _on_cancel_clicked(self) -> None:
         self._cancelled = True
