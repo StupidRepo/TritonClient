@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QProgressBar,
     QSizePolicy,
@@ -124,11 +125,15 @@ class MainWindow(QWidget):
             if progress_dialog:
                 progress_dialog.track_completed_safe(done, worker_id)
 
+        def _is_cancelled() -> bool:
+            return progress_dialog.is_cancelled() if progress_dialog else False
+
         self.controller.download_queue_parallel(
             DownloadCallbacks(
                 track_started=_start,
                 track_progress=_progress,
                 track_completed=_completed,
+                is_cancelled=_is_cancelled,
             )
         )
 
@@ -140,6 +145,7 @@ class MainWindow(QWidget):
         # Create worker thread for downloading
         worker = DownloadWorker(lambda: self._download_queue_tracks(progress_dialog=dialog))
         worker.finished.connect(lambda: self._on_download_finished(dialog))
+        worker.error_occurred.connect(lambda error: self._on_download_error(error, dialog))
 
         dialog.show()
         worker.start()
@@ -149,27 +155,43 @@ class MainWindow(QWidget):
         dialog.accept()
         self._update_queue_label()
 
+    def _on_download_error(self, error: str, dialog: DownloadProgressDialog) -> None:
+        dialog.accept()
+        QMessageBox.critical(
+            self,
+            "Download Error",
+            f"An error occurred during download:\n{error}"
+        )
+        self._update_queue_label()
+
     @Slot()
     def on_search_clicked(self) -> None:
         category = self.dropdown.currentText()
         query = self.search_input.text().strip()
         if not query:
             return
-        results = self.controller.search(category, query)
-        if category == "Tracks":
-            self.notice_label.hide()
-            self.details_stack.setCurrentWidget(self.track_list)
-            self.track_list.setVisible(True)
-            self.track_list.load_tracks(results)
-        elif category == "Playlists":
-            self.notice_label.hide()
-            self.details_stack.setCurrentWidget(self.playlist_list)
-            self.playlist_list.load_playlists(results)
-        else:
-            self.details_stack.setCurrentWidget(self.track_list)
-            self.track_list.clear()
-            self.track_list.setVisible(False)
-            self.notice_label.setVisible(True)
+        try:
+            results = self.controller.search(category, query)
+            if category == "Tracks":
+                self.notice_label.hide()
+                self.details_stack.setCurrentWidget(self.track_list)
+                self.track_list.setVisible(True)
+                self.track_list.load_tracks(results)
+            elif category == "Playlists":
+                self.notice_label.hide()
+                self.details_stack.setCurrentWidget(self.playlist_list)
+                self.playlist_list.load_playlists(results)
+            else:
+                self.details_stack.setCurrentWidget(self.track_list)
+                self.track_list.clear()
+                self.track_list.setVisible(False)
+                self.notice_label.setVisible(True)
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Search Error",
+                f"Failed to perform search:\n{str(e)}"
+            )
 
     @Slot()
     def on_queue_selected(self) -> None:
@@ -199,13 +221,20 @@ class MainWindow(QWidget):
 
     @Slot(Playlist)
     def on_playlist_selected(self, playlist: Playlist) -> None:
-        detail, tracks = self.controller.fetch_playlist_detail(playlist.uuid)
-        self._current_playlist = detail
-        self._current_playlist_tracks = tracks
-        self.playlist_header.render(detail)
-        self.details_stack.setCurrentIndex(2)
-        self.playlist_tracks.setVisible(True)
-        self.playlist_tracks.load_tracks(tracks)
+        try:
+            detail, tracks = self.controller.fetch_playlist_detail(playlist.uuid)
+            self._current_playlist = detail
+            self._current_playlist_tracks = tracks
+            self.playlist_header.render(detail)
+            self.details_stack.setCurrentIndex(2)
+            self.playlist_tracks.setVisible(True)
+            self.playlist_tracks.load_tracks(tracks)
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Playlist Error",
+                f"Failed to fetch playlist details:\n{str(e)}"
+            )
 
     @Slot()
     def on_download_playlist(self) -> None:
@@ -235,6 +264,9 @@ class MainWindow(QWidget):
         def _completed(done: int, total: int, worker_id: int) -> None:
             dialog.track_completed_safe(done, worker_id)
 
+        def _is_cancelled() -> bool:
+            return dialog.is_cancelled()
+
         def _download():
             self.controller.download_tracks_parallel(
                 self._current_playlist_tracks,
@@ -243,6 +275,7 @@ class MainWindow(QWidget):
                     track_started=_start,
                     track_progress=_progress,
                     track_completed=_completed,
+                    is_cancelled=_is_cancelled,
                 ),
                 max_workers=MAX_CONCURRENT_DOWNLOADS,
             )
@@ -270,7 +303,7 @@ class QueueDialog(QDialog):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Download Queue")
+        self.setWindowTitle("Queue")
         self.setModal(True)
         self._controller = controller
         self._download_callback = download_callback
@@ -283,7 +316,7 @@ class QueueDialog(QDialog):
         self._refresh_list()
 
         delete_button = QPushButton("Delete Selected")
-        download_button = QPushButton("Download Queue")
+        download_button = QPushButton("Download All")
         close_button = QPushButton("Close")
 
         delete_button.clicked.connect(self._delete_selected)
@@ -331,24 +364,53 @@ class QueueDialog(QDialog):
 class DownloadWorker(QThread):
     """Background thread for downloading tracks."""
     finished = Signal()
+    error_occurred = Signal(str)  # Emits error message
 
     def __init__(self, download_func: Callable[[], None]) -> None:
         super().__init__()
         self._download_func = download_func
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        """Request cancellation of the download."""
+        self._cancelled = True
+
+    def is_cancelled(self) -> bool:
+        """Check if cancellation has been requested."""
+        return self._cancelled
 
     def run(self) -> None:
         try:
             self._download_func()
+        except Exception as e:
+            if not self._cancelled:
+                self.error_occurred.emit(str(e))
         finally:
             self.finished.emit()
 
 
+# noinspection PyUnusedLocal
+def report_current_progress(downloaded: int, total: int) -> None:
+    QApplication.processEvents()
+
+
+# noinspection PyUnusedLocal
+def start_track(track: Track) -> None:
+    QApplication.processEvents()
+
+
 class DownloadProgressDialog(QDialog):
+    cancel_requested = Signal()
+
     def __init__(self, total_tracks: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Downloading Queue")
+        self.setWindowTitle("Downloading...")
         self.setModal(True)
         self._total_tracks = total_tracks
+        self._cancelled = False
+
+        # Disable the close button (X)
+        self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
 
         layout = QVBoxLayout(self)
 
@@ -386,11 +448,22 @@ class DownloadProgressDialog(QDialog):
             if i < MAX_CONCURRENT_DOWNLOADS - 1:
                 layout.addSpacing(5)
 
-    def start_track(self, track: Track) -> None:
-        QApplication.processEvents()
+        # Cancel button
+        layout.addSpacing(10)
+        self._cancel_button = QPushButton("Cancel")
+        self._cancel_button.clicked.connect(self._on_cancel_clicked)
+        layout.addWidget(self._cancel_button)
 
-    def report_current_progress(self, downloaded: int, total: int) -> None:
-        QApplication.processEvents()
+    def _on_cancel_clicked(self) -> None:
+        """Handle cancel button click."""
+        self._cancelled = True
+        self._cancel_button.setEnabled(False)
+        self._cancel_button.setText("Cancelling...")
+        self.cancel_requested.emit()
+
+    def is_cancelled(self) -> bool:
+        """Check if cancellation has been requested."""
+        return self._cancelled
 
     def track_completed(self, completed: int) -> None:
         self._total_bar.setValue(completed)
@@ -398,13 +471,15 @@ class DownloadProgressDialog(QDialog):
         QApplication.processEvents()
 
     # Thread-safe versions that use QMetaObject.invokeMethod
+    # noinspection PyTypeChecker
     def start_track_safe(self, track: Track, worker_id: int) -> None:
         if 0 <= worker_id < len(self._worker_labels):
+            # First reset the progress bar
             QMetaObject.invokeMethod(
-                self._worker_labels[worker_id],
-                "setText",
+                self._worker_bars[worker_id],
+                "setMaximum",
                 Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, _format_queue_entry(track))
+                Q_ARG(int, 100)
             )
             QMetaObject.invokeMethod(
                 self._worker_bars[worker_id],
@@ -412,7 +487,15 @@ class DownloadProgressDialog(QDialog):
                 Qt.ConnectionType.QueuedConnection,
                 Q_ARG(int, 0)
             )
+            # Then update the label
+            QMetaObject.invokeMethod(
+                self._worker_labels[worker_id],
+                "setText",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, _format_queue_entry(track))
+            )
 
+    # noinspection PyTypeChecker
     def report_current_progress_safe(self, downloaded: int, total: int, worker_id: int) -> None:
         if 0 <= worker_id < len(self._worker_bars):
             maximum = max(total, 1)
@@ -429,6 +512,7 @@ class DownloadProgressDialog(QDialog):
                 Q_ARG(int, min(downloaded, maximum))
             )
 
+    # noinspection PyTypeChecker
     def track_completed_safe(self, completed: int, worker_id: int) -> None:
         # Update overall progress
         QMetaObject.invokeMethod(
@@ -444,20 +528,32 @@ class DownloadProgressDialog(QDialog):
             Q_ARG(str, f"{completed} / {self._total_tracks} downloaded")
         )
 
-        # Reset worker to idle
-        if 0 <= worker_id < len(self._worker_labels):
-            QMetaObject.invokeMethod(
-                self._worker_labels[worker_id],
-                "setText",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, "Idle")
-            )
+        # Mark worker as completed (will show 100% progress bar)
+        if 0 <= worker_id < len(self._worker_bars):
             QMetaObject.invokeMethod(
                 self._worker_bars[worker_id],
                 "setValue",
                 Qt.ConnectionType.QueuedConnection,
-                Q_ARG(int, 0)
+                Q_ARG(int, self._worker_bars[worker_id].maximum())
             )
+
+        # If cancellation was requested, show "Waiting..." for this worker
+        if self._cancelled and 0 <= worker_id < len(self._worker_labels):
+            QMetaObject.invokeMethod(
+                self._worker_labels[worker_id],
+                "setText",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, "Waiting for other thread(s)...")
+            )
+        # If all tracks are done, mark workers as completed
+        elif completed >= self._total_tracks:
+            for i in range(len(self._worker_labels)):
+                QMetaObject.invokeMethod(
+                    self._worker_labels[i],
+                    "setText",
+                    Qt.ConnectionType.QueuedConnection,
+                    Q_ARG(str, "Completed")
+                )
 
 
 class PlaylistHeaderWidget(QWidget):

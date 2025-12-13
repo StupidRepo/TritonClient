@@ -22,6 +22,7 @@ class DownloadCallbacks:
     track_started: Callable[[Track, int, int, int], None] | None = None  # track, completed, total, worker_id
     track_progress: Callable[[int, int, int], None] | None = None  # downloaded, total, worker_id
     track_completed: Callable[[int, int, int], None] | None = None  # completed, total, worker_id
+    is_cancelled: Callable[[], bool] | None = None  # check if cancellation requested
 
 
 class AppController:
@@ -80,6 +81,10 @@ class AppController:
         completed = 0
         worker_id = 0  # Single-threaded downloads use worker 0
         for track in tracks:
+            # Check for cancellation
+            if callbacks.is_cancelled and callbacks.is_cancelled():
+                break
+
             if callbacks.track_started:
                 callbacks.track_started(track, completed, total, worker_id)
 
@@ -117,12 +122,21 @@ class AppController:
         completed = 0
         lock = Lock()
         worker_id_counter = 0
+        cancelled = False
 
-        def download_single(track: Track, track_index: int) -> None:
-            nonlocal completed, worker_id_counter
+        def download_single(track: Track, track_index: int) -> bool:
+            nonlocal completed, worker_id_counter, cancelled
+
+            # Check for cancellation before starting
+            if callbacks.is_cancelled and callbacks.is_cancelled():
+                with lock:
+                    cancelled = True
+                return False
 
             # assign worker ID
             with lock:
+                if cancelled:
+                    return False
                 worker_id = worker_id_counter % max_workers
                 worker_id_counter += 1
                 current_completed = completed
@@ -152,6 +166,8 @@ class AppController:
                 current_completed = completed
             if callbacks.track_completed:
                 callbacks.track_completed(current_completed, total, worker_id)
+
+            return True
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(download_single, track, idx) for idx, track in enumerate(tracks)]
