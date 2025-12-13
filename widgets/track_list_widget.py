@@ -12,18 +12,16 @@ class TrackListWidget(BaseListWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.setUniformItemSizes(True)
-        self.setSpacing(0)
 
     def load_tracks(self, tracks: Iterable[Track]) -> None:
         self.clear()
         for track in tracks:
             item = QListWidgetItem()
             widget = AlbumTrackItem(track)
-            widget.setFixedHeight(max(widget.sizeHint().height(), 64))
-            item.setSizeHint(widget.sizeHint())
             self.addItem(item)
             self.setItemWidget(item, widget)
+            # Let the item size based on widget's size hint
+            item.setSizeHint(widget.sizeHint())
         self._sync_item_widget_selection()
 
 

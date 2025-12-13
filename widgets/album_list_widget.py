@@ -45,8 +45,9 @@ class AlbumListWidget(BaseListWidget):
         for album in albums:
             widget = _AlbumItemWidget(album)
             item = QListWidgetItem()
-            item.setSizeHint(widget.sizeHint())
             self.addItem(item)
             self.setItemWidget(item, widget)
+            # Let the item size based on widget's size hint
+            item.setSizeHint(widget.sizeHint())
         self._sync_item_widget_selection()
 

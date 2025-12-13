@@ -45,8 +45,16 @@ class DownloadQueue:
         return len(self._tracks)
 
     def all_tracks(self) -> list[Track]:
+        """Return a copy of all tracks in the queue."""
         return list(self._tracks)
 
     def is_empty(self) -> bool:
+        """Check if the queue is empty."""
         return not self._tracks
+
+    def peek(self, count: int | None = None) -> list[Track]:
+        """Return the first 'count' tracks without removing them. If count is None, return all."""
+        if count is None:
+            return list(self._tracks)
+        return list(self._tracks[:count])
 

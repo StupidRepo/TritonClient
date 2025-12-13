@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
-    QWidget,
+    QWidget, QLayout,
 )
 
 from config import MAX_CONCURRENT_DOWNLOADS
@@ -27,9 +27,9 @@ from controllers.app_controller import AppController, DownloadCallbacks
 from models.album import Album
 from models.playlist import Playlist
 from models.track import Track
-from utils.cover import load_cover_pixmap
-from utils.formatting import format_duration, format_track_listing
+from utils.formatting import format_track_listing
 from widgets.album_list_widget import AlbumListWidget
+from widgets.header_widget import AlbumHeaderWidget, PlaylistHeaderWidget
 from widgets.playlist_list_widget import PlaylistListWidget
 from widgets.track_list_widget import TrackListWidget
 
@@ -262,18 +262,20 @@ class MainWindow(QWidget):
                 f"Failed to fetch playlist details:\n{str(e)}"
             )
 
-    @Slot()
-    def on_download_playlist(self) -> None:
-        if not self._current_playlist or not self._current_playlist_tracks:
-            return
-
-        safe_title = re.sub(r'[\\/:*?"<>|]+', '', self._current_playlist.title).strip()
+    def _download_tracks_with_progress(
+        self,
+        tracks: list[Track],
+        title: str,
+        default_title: str = "Download"
+    ) -> None:
+        """Download tracks with a progress dialog."""
+        safe_title = re.sub(r'[\\/:*?"<>|]+', '', title).strip()
         if not safe_title:
-            safe_title = "Playlist"
+            safe_title = default_title
 
-        playlist_dir = self.controller.download_dir / safe_title
+        download_dir = self.controller.download_dir / safe_title
 
-        dialog = DownloadProgressDialog(total_tracks=len(self._current_playlist_tracks), parent=self)
+        dialog = DownloadProgressDialog(total_tracks=len(tracks), parent=self)
 
         def _start(track: Track, completed: int, total: int, worker_id: int) -> None:
             dialog.start_track_safe(track, worker_id)
@@ -289,8 +291,8 @@ class MainWindow(QWidget):
 
         def _download():
             self.controller.download_tracks_parallel(
-                self._current_playlist_tracks,
-                playlist_dir,
+                tracks,
+                download_dir,
                 DownloadCallbacks(
                     track_started=_start,
                     track_progress=_progress,
@@ -306,6 +308,16 @@ class MainWindow(QWidget):
         dialog.show()
         worker.start()
         dialog.exec()
+
+    @Slot()
+    def on_download_playlist(self) -> None:
+        if not self._current_playlist or not self._current_playlist_tracks:
+            return
+        self._download_tracks_with_progress(
+            self._current_playlist_tracks,
+            self._current_playlist.title,
+            "Playlist"
+        )
 
     @Slot(Album)
     def on_album_selected(self, album: Album) -> None:
@@ -329,46 +341,11 @@ class MainWindow(QWidget):
     def on_download_album(self) -> None:
         if not self._current_album or not self._current_album_tracks:
             return
-
-        safe_title = re.sub(r'[\\/:*?"<>|]+', '', self._current_album.title).strip()
-        if not safe_title:
-            safe_title = "Album"
-
-        album_dir = self.controller.download_dir / safe_title
-
-        dialog = DownloadProgressDialog(total_tracks=len(self._current_album_tracks), parent=self)
-
-        def _start(track: Track, completed: int, total: int, worker_id: int) -> None:
-            dialog.start_track_safe(track, worker_id)
-
-        def _progress(downloaded: int, total: int, worker_id: int) -> None:
-            dialog.report_current_progress_safe(downloaded, total, worker_id)
-
-        def _completed(done: int, total: int, worker_id: int) -> None:
-            dialog.track_completed_safe(done, worker_id)
-
-        def _is_cancelled() -> bool:
-            return dialog.is_cancelled()
-
-        def _download():
-            self.controller.download_tracks_parallel(
-                self._current_album_tracks,
-                album_dir,
-                DownloadCallbacks(
-                    track_started=_start,
-                    track_progress=_progress,
-                    track_completed=_completed,
-                    is_cancelled=_is_cancelled,
-                ),
-                max_workers=MAX_CONCURRENT_DOWNLOADS,
-            )
-
-        worker = DownloadWorker(_download)
-        worker.finished.connect(dialog.accept)
-
-        dialog.show()
-        worker.start()
-        dialog.exec()
+        self._download_tracks_with_progress(
+            self._current_album_tracks,
+            self._current_album.title,
+            "Album"
+        )
 
     def _refresh_add_button_label(self) -> None:
         target_list = self._active_track_list()
@@ -453,11 +430,9 @@ class DownloadWorker(QThread):
         self._cancelled = False
 
     def cancel(self) -> None:
-        """Request cancellation of the download."""
         self._cancelled = True
 
     def is_cancelled(self) -> bool:
-        """Check if cancellation has been requested."""
         return self._cancelled
 
     def run(self) -> None:
@@ -480,12 +455,81 @@ def start_track(track: Track) -> None:
     QApplication.processEvents()
 
 
+class WorkerProgressWidget(QWidget):
+    def __init__(self, worker_id: int, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._worker_id = worker_id
+        self._last_progress = 0
+        self._last_maximum = 1
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        self._title_label = QLabel(f"Worker {worker_id + 1}")
+        self._title_label.setStyleSheet("font-weight: bold;")
+        layout.addWidget(self._title_label)
+
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setRange(0, 1)
+        self._progress_bar.setValue(0)
+        layout.addWidget(self._progress_bar)
+
+        self._track_label = QLabel("Idle")
+        self._track_label.setStyleSheet("color: gray;")
+        layout.addWidget(self._track_label)
+        layout.setSizeConstraint(
+            QLayout.SizeConstraint.SetMinimumSize
+        )
+        self.setSizePolicy(
+            QSizePolicy.Policy.Minimum,
+            QSizePolicy.Policy.Minimum
+        )
+
+    @Slot(str)
+    def set_track(self, track_text: str) -> None:
+        self._track_label.setText(track_text)
+        self._track_label.setStyleSheet("")
+        self._last_progress = 0
+        self._last_maximum = 100
+        self._progress_bar.setMaximum(100)
+        self._progress_bar.setValue(0)
+
+    @Slot(int, int)
+    def set_progress(self, current: int, maximum: int) -> None:
+        maximum = max(maximum, 1)
+        current = min(current, maximum)
+
+        if current > self._last_progress or maximum != self._last_maximum:
+            self._last_progress = current
+            self._last_maximum = maximum
+            self._progress_bar.setMaximum(maximum)
+            self._progress_bar.setValue(current)
+
+    @Slot()
+    def set_idle(self) -> None:
+        self._track_label.setText("Idle")
+        self._track_label.setStyleSheet("color: gray;")
+        self._progress_bar.setValue(0)
+
+    @Slot()
+    def set_completed(self) -> None:
+        self._track_label.setText("Completed")
+        self._track_label.setStyleSheet("color: green;")
+        self._progress_bar.setValue(self._progress_bar.maximum())
+
+    @Slot()
+    def set_waiting(self) -> None:
+        self._track_label.setText("Waiting for other thread(s)...")
+        self._track_label.setStyleSheet("color: orange;")
+
+
 class DownloadProgressDialog(QDialog):
     cancel_requested = Signal()
 
     def __init__(self, total_tracks: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Downloading...")
+        self.setWindowTitle("Download Progress")
         self.setModal(True)
         self._total_tracks = total_tracks
         self._cancelled = False
@@ -493,9 +537,16 @@ class DownloadProgressDialog(QDialog):
         self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
 
         layout = QVBoxLayout(self)
+        layout.setSizeConstraints(
+            QLayout.SizeConstraint.SetMinimumSize,
+            QLayout.SizeConstraint.SetMinimumSize
+        )
 
         # Overall progress section
-        layout.addWidget(QLabel("Overall Progress"))
+        overall_label = QLabel("Overall Progress")
+        overall_label.setStyleSheet("font-weight: bold;")
+        layout.addWidget(overall_label)
+
         self._total_bar = QProgressBar()
         self._total_bar.setRange(0, total_tracks)
         self._total_bar.setValue(0)
@@ -504,111 +555,73 @@ class DownloadProgressDialog(QDialog):
         self._total_label = QLabel(f"0 / {total_tracks} downloaded")
         layout.addWidget(self._total_label)
 
-        layout.addSpacing(10)
+        layout.addSpacing(16)
 
-        self._worker_bars: list[QProgressBar] = []
-        self._worker_labels: list[QLabel] = []
-        self._worker_last_progress: list[int] = []
-        self._worker_last_maximum: list[int] = []
-
+        # Worker progress widgets
+        self._workers: list[WorkerProgressWidget] = []
         for i in range(MAX_CONCURRENT_DOWNLOADS):
-            layout.addWidget(QLabel(f"Worker {i + 1}"))
+            worker_widget = WorkerProgressWidget(i, self)
+            self._workers.append(worker_widget)
+            layout.addWidget(worker_widget)
 
-            worker_bar = QProgressBar()
-            worker_bar.setRange(0, 1)
-            worker_bar.setValue(0)
-            self._worker_bars.append(worker_bar)
-            layout.addWidget(worker_bar)
-
-            worker_label = QLabel("Idle")
-            worker_label.setStyleSheet("color: gray;")
-            self._worker_labels.append(worker_label)
-            layout.addWidget(worker_label)
-
-            self._worker_last_progress.append(0)
-            self._worker_last_maximum.append(1)
+            # after adding each worker, we need to trigger a layout update so that the dialog resizes properly
+            layout.update()
+            self.layout().update()
 
             if i < MAX_CONCURRENT_DOWNLOADS - 1:
-                layout.addSpacing(5)
+                layout.addSpacing(8)
+
+            layout.update()
+            self.layout().update()
 
         # Cancel button
-        layout.addSpacing(10)
+        layout.addSpacing(16)
         self._cancel_button = QPushButton("Cancel")
         self._cancel_button.clicked.connect(self._on_cancel_clicked)
         layout.addWidget(self._cancel_button)
+        layout.setSizeConstraint(
+            QLayout.SizeConstraint.SetMinimumSize
+        )
+        self.setSizePolicy(
+            QSizePolicy.Policy.Minimum,
+            QSizePolicy.Policy.Minimum
+        )
+        layout.activate()
+        self.update().update()
 
     def _on_cancel_clicked(self) -> None:
-        """Handle cancel button click."""
         self._cancelled = True
         self._cancel_button.setEnabled(False)
         self._cancel_button.setText("Cancelling...")
         self.cancel_requested.emit()
 
     def is_cancelled(self) -> bool:
-        """Check if cancellation has been requested."""
         return self._cancelled
-
-    def track_completed(self, completed: int) -> None:
-        self._total_bar.setValue(completed)
-        self._total_label.setText(f"{completed} / {self._total_tracks} downloaded")
-        QApplication.processEvents()
 
     # noinspection PyTypeChecker
     def start_track_safe(self, track: Track, worker_id: int) -> None:
-        if 0 <= worker_id < len(self._worker_labels):
-            self._worker_last_progress[worker_id] = 0
-            self._worker_last_maximum[worker_id] = 100
-
+        if 0 <= worker_id < len(self._workers):
+            track_text = _format_queue_entry(track)
             QMetaObject.invokeMethod(
-                self._worker_bars[worker_id],
-                "setMaximum",
+                self._workers[worker_id],
+                "set_track",
                 Qt.ConnectionType.QueuedConnection,
-                Q_ARG(int, 100)
-            )
-            QMetaObject.invokeMethod(
-                self._worker_bars[worker_id],
-                "setValue",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(int, 0)
-            )
-
-            QMetaObject.invokeMethod(
-                self._worker_labels[worker_id],
-                "setText",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, _format_queue_entry(track))
+                Q_ARG(str, track_text)
             )
 
     # noinspection PyTypeChecker
     def report_current_progress_safe(self, downloaded: int, total: int, worker_id: int) -> None:
-        if 0 <= worker_id < len(self._worker_bars):
-            maximum = max(total, 1)
-            value = min(downloaded, maximum)
-
-            # only update if progress has moved forward or maximum changed
-            # this prevents flickering from out-of-order updates
-            if (value > self._worker_last_progress[worker_id] or
-                maximum != self._worker_last_maximum[worker_id]):
-
-                self._worker_last_progress[worker_id] = value
-                self._worker_last_maximum[worker_id] = maximum
-
-                QMetaObject.invokeMethod(
-                    self._worker_bars[worker_id],
-                    "setMaximum",
-                    Qt.ConnectionType.QueuedConnection,
-                    Q_ARG(int, maximum)
-                )
-                QMetaObject.invokeMethod(
-                    self._worker_bars[worker_id],
-                    "setValue",
-                    Qt.ConnectionType.QueuedConnection,
-                    Q_ARG(int, value)
-                )
+        if 0 <= worker_id < len(self._workers):
+            QMetaObject.invokeMethod(
+                self._workers[worker_id],
+                "set_progress",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(int, downloaded),
+                Q_ARG(int, total)
+            )
 
     # noinspection PyTypeChecker
     def track_completed_safe(self, completed: int, worker_id: int) -> None:
-        # update overall progress
         QMetaObject.invokeMethod(
             self._total_bar,
             "setValue",
@@ -622,130 +635,33 @@ class DownloadProgressDialog(QDialog):
             Q_ARG(str, f"{completed} / {self._total_tracks} downloaded")
         )
 
-        # mark worker as completed (will show 100% progress bar)
-        if 0 <= worker_id < len(self._worker_bars):
-            QMetaObject.invokeMethod(
-                self._worker_bars[worker_id],
-                "setValue",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(int, self._worker_bars[worker_id].maximum())
-            )
-
-        # if cancellation was requested, show "Waiting..." for this worker
-        if self._cancelled and 0 <= worker_id < len(self._worker_labels):
-            QMetaObject.invokeMethod(
-                self._worker_labels[worker_id],
-                "setText",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, "Waiting for other thread(s)...")
-            )
-
-        # if all tracks are done, mark workers as completed
-        elif completed >= self._total_tracks:
-            for i in range(len(self._worker_labels)):
+        if 0 <= worker_id < len(self._workers):
+            if self._cancelled:
                 QMetaObject.invokeMethod(
-                    self._worker_labels[i],
-                    "setText",
-                    Qt.ConnectionType.QueuedConnection,
-                    Q_ARG(str, "Completed")
+                    self._workers[worker_id],
+                    "set_waiting",
+                    Qt.ConnectionType.QueuedConnection
+                )
+            elif completed >= self._total_tracks:
+                QMetaObject.invokeMethod(
+                    self._workers[worker_id],
+                    "set_completed",
+                    Qt.ConnectionType.QueuedConnection
+                )
+            else:
+                QMetaObject.invokeMethod(
+                    self._workers[worker_id],
+                    "set_idle",
+                    Qt.ConnectionType.QueuedConnection
                 )
 
+        if completed >= self._total_tracks:
+            for i, worker in enumerate(self._workers):
+                QMetaObject.invokeMethod(
+                    worker,
+                    "set_completed",
+                    Qt.ConnectionType.QueuedConnection
+                )
 
-class PlaylistHeaderWidget(QWidget):
-    download_requested = Signal()
-
-    def __init__(self) -> None:
-        super().__init__()
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
-
-        self._cover = QLabel()
-        self._cover.setFixedSize(160, 160)
-        layout.addWidget(self._cover)
-
-        text_container = QVBoxLayout()
-        text_container.setSpacing(4)
-
-        # hack: set text container to wrap on vertical height so that the cover and text align at top
-        text_container.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-        self._title = QLabel("Select a playlist")
-        self._title.setWordWrap(True)
-        self._title.setStyleSheet("font-weight: bold; font-size: 18pt;")
-
-        self._meta = QLabel()
-        self._meta.setStyleSheet("color: gray;")
-
-        self._desc = QLabel()
-        self._desc.setWordWrap(True)
-
-        self._download_button = QPushButton("Download Playlist")
-        self._download_button.clicked.connect(self.download_requested.emit)
-
-        text_container.addWidget(self._title)
-        text_container.addWidget(self._meta)
-        text_container.addWidget(self._desc)
-        text_container.addWidget(self._download_button)
-        layout.addLayout(text_container)
-
-    def render(self, playlist: Playlist, **kwargs) -> None:
-        pixmap = load_cover_pixmap(playlist.cover_id, 640, 160)
-        self._cover.setPixmap(pixmap)
-        self._title.setText(playlist.title)
-        duration = format_duration(playlist.duration, long=True)
-        artists = ", ".join(playlist.featured_artists) if playlist.featured_artists else "various"
-        self._meta.setText(f"{playlist.number_of_tracks} tracks • {duration} • {artists}")
-        self._desc.setText(playlist.description or "no description")
-
-
-class AlbumHeaderWidget(QWidget):
-    download_requested = Signal()
-
-    def __init__(self) -> None:
-        super().__init__()
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
-
-        self._cover = QLabel()
-        self._cover.setFixedSize(160, 160)
-        layout.addWidget(self._cover)
-
-        text_container = QVBoxLayout()
-        text_container.setSpacing(4)
-
-        # hack: set text container to wrap on vertical height so that the cover and text align at top
-        text_container.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-        self._title = QLabel("Select an album")
-        self._title.setWordWrap(True)
-        self._title.setStyleSheet("font-weight: bold; font-size: 18pt;")
-
-        self._meta = QLabel()
-        self._meta.setStyleSheet("color: gray;")
-
-        self._artist = QLabel()
-        self._artist.setWordWrap(True)
-
-        self._download_button = QPushButton("Download Album")
-        self._download_button.clicked.connect(self.download_requested.emit)
-
-        text_container.addWidget(self._title)
-        text_container.addWidget(self._meta)
-        text_container.addWidget(self._artist)
-        text_container.addWidget(self._download_button)
-        layout.addLayout(text_container)
-
-    def render(self, album: Album, **kwargs) -> None:
-        pixmap = load_cover_pixmap(album.cover_id, 640, 160)
-        self._cover.setPixmap(pixmap)
-        self._title.setText(album.title)
-        duration = format_duration(album.duration, long=True)
-        self._meta.setText(f"{album.number_of_tracks} tracks • {duration}")
-        artists = ", ".join(album.artists) if album.artists else "Unknown Artist"
-        year = album.release_date.split("-")[0] if album.release_date else ""
-        artist_text = f"{artists}" + (f" • {year}" if year else "")
-        self._artist.setText(artist_text)
 
 

@@ -117,11 +117,14 @@ class AppController:
         total = len(tracks)
         completed = 0
         lock = Lock()
-        worker_id_counter = 0
         cancelled = False
 
+        # Track which worker slots are available
+        available_workers = list(range(max_workers))
+        worker_lock = Lock()
+
         def download_single(track: Track, track_index: int) -> bool:
-            nonlocal completed, worker_id_counter, cancelled
+            nonlocal completed, cancelled
 
             # Check for cancellation before starting
             if callbacks.is_cancelled and callbacks.is_cancelled():
@@ -129,20 +132,31 @@ class AppController:
                     cancelled = True
                 return False
 
-            # assign worker ID
-            with lock:
+            # Acquire a worker ID from the available pool
+            with worker_lock:
                 if cancelled:
                     return False
-                worker_id = worker_id_counter % max_workers
-                worker_id_counter += 1
+                if not available_workers:
+                    # This shouldn't happen with proper executor sizing
+                    worker_id = track_index % max_workers
+                else:
+                    worker_id = available_workers.pop(0)
+
+            with lock:
                 current_completed = completed
 
-            # Download the track
-            self._download_single_track(
-                track, destination, callbacks, worker_id, current_completed, total
-            )
+            try:
+                # Download the track
+                self._download_single_track(
+                    track, destination, callbacks, worker_id, current_completed, total
+                )
+            finally:
+                # Release the worker ID back to the pool
+                with worker_lock:
+                    available_workers.append(worker_id)
+                    available_workers.sort()  # Keep in order for consistency
 
-            # notify track completed
+            # Notify track completed
             with lock:
                 completed += 1
                 current_completed = completed
@@ -153,7 +167,7 @@ class AppController:
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(download_single, track, idx) for idx, track in enumerate(tracks)]
-            # wait for all dls to complete
+            # Wait for all downloads to complete
             for future in as_completed(futures):
                 try:
                     future.result()

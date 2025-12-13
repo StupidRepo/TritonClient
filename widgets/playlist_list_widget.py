@@ -17,9 +17,9 @@ class _PlaylistItemWidget(BaseItemWidget):
         self.playlist = playlist
 
         # Create labels using base class methods
-        self._create_title_label(playlist.title)
+        self._create_title_label(playlist.title.strip())
         self._create_subtitle_label(
-            playlist.description or "No description", word_wrap=True
+            playlist.description.strip() or "No description", word_wrap=True
         )
         self._create_info_label(
             f"{playlist.number_of_tracks} tracks • {format_duration(playlist.duration, long=True)}"
@@ -41,9 +41,10 @@ class PlaylistListWidget(BaseListWidget):
         for playlist in playlists:
             widget = _PlaylistItemWidget(playlist)
             item = QListWidgetItem()
-            item.setSizeHint(widget.sizeHint())
             self.addItem(item)
             self.setItemWidget(item, widget)
+            # Let the item size based on widget's size hint
+            item.setSizeHint(widget.sizeHint())
         self._sync_item_widget_selection()
 
     def _on_item_activated(self, item: QListWidgetItem) -> None:
