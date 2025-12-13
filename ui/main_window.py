@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Callable
 import re
+import time
 
 from PySide6.QtCore import Slot, Qt, Signal, QMetaObject, Q_ARG, QThread
 from PySide6.QtWidgets import (
@@ -461,6 +462,8 @@ class WorkerProgressWidget(QWidget):
         self._worker_id = worker_id
         self._last_progress = 0
         self._last_maximum = 1
+        self._last_update_time = 0.0
+        self._last_bytes = 0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -477,13 +480,23 @@ class WorkerProgressWidget(QWidget):
 
         self._track_label = QLabel("Idle")
         self._track_label.setStyleSheet("color: gray;")
-        layout.addWidget(self._track_label)
-        layout.setSizeConstraint(
-            QLayout.SizeConstraint.SetMinimumSize
+        # Ensure the label can expand horizontally
+        self._track_label.setSizePolicy(
+            QSizePolicy.Policy.Minimum,
+            QSizePolicy.Policy.Maximum
         )
+        layout.addWidget(self._track_label)
+
+        self._speed_label = QLabel("")
+        self._speed_label.setStyleSheet("color: #666; font-size: 10pt;")
+        layout.addWidget(self._speed_label)
+
         self.setSizePolicy(
             QSizePolicy.Policy.Minimum,
-            QSizePolicy.Policy.Minimum
+            QSizePolicy.Policy.Maximum
+        )
+        layout.setSizeConstraint(
+            QLayout.SizeConstraint.SetFixedSize
         )
 
     @Slot(str)
@@ -494,6 +507,9 @@ class WorkerProgressWidget(QWidget):
         self._last_maximum = 100
         self._progress_bar.setMaximum(100)
         self._progress_bar.setValue(0)
+        self._last_update_time = time.time()
+        self._last_bytes = 0
+        self._speed_label.setText("")
 
     @Slot(int, int)
     def set_progress(self, current: int, maximum: int) -> None:
@@ -506,22 +522,40 @@ class WorkerProgressWidget(QWidget):
             self._progress_bar.setMaximum(maximum)
             self._progress_bar.setValue(current)
 
+            # Calculate download speed
+            current_time = time.time()
+            time_diff = current_time - self._last_update_time
+
+            # Update speed every 0.5 seconds to avoid too frequent updates
+            if time_diff >= 0.5 and current > self._last_bytes:
+                bytes_diff = current - self._last_bytes
+                speed_bps = bytes_diff / time_diff  # bytes per second
+                speed_mbps = speed_bps / (1024 * 1024)  # convert to MB/s
+
+                self._speed_label.setText(f"{speed_mbps:.2f} MB/s")
+
+                self._last_update_time = current_time
+                self._last_bytes = current
+
     @Slot()
     def set_idle(self) -> None:
         self._track_label.setText("Idle")
         self._track_label.setStyleSheet("color: gray;")
         self._progress_bar.setValue(0)
+        self._speed_label.setText("")
 
     @Slot()
     def set_completed(self) -> None:
         self._track_label.setText("Completed")
         self._track_label.setStyleSheet("color: green;")
         self._progress_bar.setValue(self._progress_bar.maximum())
+        self._speed_label.setText("")
 
     @Slot()
     def set_waiting(self) -> None:
         self._track_label.setText("Waiting for other thread(s)...")
         self._track_label.setStyleSheet("color: orange;")
+        self._speed_label.setText("")
 
 
 class DownloadProgressDialog(QDialog):
@@ -535,16 +569,12 @@ class DownloadProgressDialog(QDialog):
         self._cancelled = False
         self.setSizePolicy(
             QSizePolicy.Policy.Ignored,
-            QSizePolicy.Policy.Ignored
+            QSizePolicy.Policy.Fixed
         )
 
         self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
 
         layout = QVBoxLayout(self)
-        layout.setSizeConstraints(
-            QLayout.SizeConstraint.SetMinimumSize,
-            QLayout.SizeConstraint.SetMinimumSize
-        )
 
         # Overall progress section
         overall_label = QLabel("Overall Progress")
@@ -575,6 +605,8 @@ class DownloadProgressDialog(QDialog):
             if i < MAX_CONCURRENT_DOWNLOADS - 1:
                 layout.addSpacing(8)
 
+            self.adjustSize()
+
             layout.activate()
             self.layout().activate()
 
@@ -583,17 +615,10 @@ class DownloadProgressDialog(QDialog):
         self._cancel_button = QPushButton("Cancel")
         self._cancel_button.clicked.connect(self._on_cancel_clicked)
         layout.addWidget(self._cancel_button)
-        layout.setSizeConstraint(
-            QLayout.SizeConstraint.SetMinimumSize
-        )
-        self.setSizePolicy(
-            QSizePolicy.Policy.Ignored,
-            QSizePolicy.Policy.Ignored
-        )
+
         layout.update()
         self.layout().update()
 
-        # set initial size to fit contents
         self.adjustSize()
 
     def _on_cancel_clicked(self) -> None:
