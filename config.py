@@ -1,0 +1,3 @@
+# dl settings
+MAX_CONCURRENT_DOWNLOADS = 2
+

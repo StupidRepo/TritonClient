@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PySide6.QtCore import Slot, Qt
+from PySide6.QtCore import Slot, Qt, Signal, QMetaObject, Q_ARG, QThread
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from config import MAX_CONCURRENT_DOWNLOADS
 from controllers.app_controller import AppController, DownloadCallbacks
 from models.playlist import Playlist
 from models.track import Track
@@ -39,6 +40,8 @@ class MainWindow(QWidget):
         super().__init__()
         self.setWindowTitle("Triton Client")
         self.controller = AppController()
+        self._current_playlist: Playlist | None = None
+        self._current_playlist_tracks: list[Track] = []
 
         self.dropdown = QComboBox()
         self.dropdown.addItems(self.controller.categories())
@@ -87,6 +90,7 @@ class MainWindow(QWidget):
         root_layout.addWidget(self.notice_label)
 
         self.playlist_list.playlist_activated.connect(self.on_playlist_selected)
+        self.playlist_header.download_requested.connect(self.on_download_playlist)
         self.search_button.clicked.connect(self.on_search_clicked)
         self.queue_button.clicked.connect(self.on_queue_selected)
         self.show_queue_button.clicked.connect(self.on_show_queue)
@@ -108,19 +112,19 @@ class MainWindow(QWidget):
         self.show_queue_button.setText(f"Show Queue ({self.controller.queue_size()})")
 
     def _download_queue_tracks(self, progress_dialog: DownloadProgressDialog | None = None) -> None:
-        def _start(track: Track, completed: int, total: int) -> None:
+        def _start(track: Track, completed: int, total: int, worker_id: int) -> None:
             if progress_dialog:
-                progress_dialog.start_track(track)
+                progress_dialog.start_track_safe(track, worker_id)
 
-        def _progress(downloaded: int, total: int) -> None:
+        def _progress(downloaded: int, total: int, worker_id: int) -> None:
             if progress_dialog:
-                progress_dialog.report_current_progress(downloaded, total)
+                progress_dialog.report_current_progress_safe(downloaded, total, worker_id)
 
-        def _completed(done: int, total: int) -> None:
+        def _completed(done: int, total: int, worker_id: int) -> None:
             if progress_dialog:
-                progress_dialog.track_completed(done)
+                progress_dialog.track_completed_safe(done, worker_id)
 
-        self.controller.download_queue(
+        self.controller.download_queue_parallel(
             DownloadCallbacks(
                 track_started=_start,
                 track_progress=_progress,
@@ -132,8 +136,16 @@ class MainWindow(QWidget):
         if self.controller.queue_is_empty():
             return
         dialog = DownloadProgressDialog(total_tracks=self.controller.queue_size(), parent=self)
+
+        # Create worker thread for downloading
+        worker = DownloadWorker(lambda: self._download_queue_tracks(progress_dialog=dialog))
+        worker.finished.connect(lambda: self._on_download_finished(dialog))
+
         dialog.show()
-        self._download_queue_tracks(progress_dialog=dialog)
+        worker.start()
+        dialog.exec()  # Block until dialog is closed
+
+    def _on_download_finished(self, dialog: DownloadProgressDialog) -> None:
         dialog.accept()
         self._update_queue_label()
 
@@ -188,10 +200,60 @@ class MainWindow(QWidget):
     @Slot(Playlist)
     def on_playlist_selected(self, playlist: Playlist) -> None:
         detail, tracks = self.controller.fetch_playlist_detail(playlist.uuid)
+        self._current_playlist = detail
+        self._current_playlist_tracks = tracks
         self.playlist_header.render(detail)
         self.details_stack.setCurrentIndex(2)
         self.playlist_tracks.setVisible(True)
         self.playlist_tracks.load_tracks(tracks)
+
+    @Slot()
+    def on_download_playlist(self) -> None:
+        if not self._current_playlist or not self._current_playlist_tracks:
+            return
+
+        # Create a subdirectory for the playlist
+        import re
+
+        # Sanitize playlist title for use as a directory name
+        safe_title = re.sub(r'[\\/:*?"<>|]+', '', self._current_playlist.title).strip()
+        if not safe_title:
+            safe_title = "Playlist"
+
+        playlist_dir = self.controller.download_dir / safe_title
+
+        # Show progress dialog
+        dialog = DownloadProgressDialog(total_tracks=len(self._current_playlist_tracks), parent=self)
+
+        # Download tracks in parallel
+        def _start(track: Track, completed: int, total: int, worker_id: int) -> None:
+            dialog.start_track_safe(track, worker_id)
+
+        def _progress(downloaded: int, total: int, worker_id: int) -> None:
+            dialog.report_current_progress_safe(downloaded, total, worker_id)
+
+        def _completed(done: int, total: int, worker_id: int) -> None:
+            dialog.track_completed_safe(done, worker_id)
+
+        def _download():
+            self.controller.download_tracks_parallel(
+                self._current_playlist_tracks,
+                playlist_dir,
+                DownloadCallbacks(
+                    track_started=_start,
+                    track_progress=_progress,
+                    track_completed=_completed,
+                ),
+                max_workers=MAX_CONCURRENT_DOWNLOADS,
+            )
+
+        # Create worker thread for downloading
+        worker = DownloadWorker(_download)
+        worker.finished.connect(dialog.accept)
+
+        dialog.show()
+        worker.start()
+        dialog.exec()  # Block until dialog is closed
 
     def _refresh_add_button_label(self) -> None:
         target_list = self._active_track_list()
@@ -266,6 +328,21 @@ class QueueDialog(QDialog):
         self._queue_changed_callback()
 
 
+class DownloadWorker(QThread):
+    """Background thread for downloading tracks."""
+    finished = Signal()
+
+    def __init__(self, download_func: Callable[[], None]) -> None:
+        super().__init__()
+        self._download_func = download_func
+
+    def run(self) -> None:
+        try:
+            self._download_func()
+        finally:
+            self.finished.emit()
+
+
 class DownloadProgressDialog(QDialog):
     def __init__(self, total_tracks: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -273,34 +350,46 @@ class DownloadProgressDialog(QDialog):
         self.setModal(True)
         self._total_tracks = total_tracks
 
-        self._total_label = QLabel(f"0 / {total_tracks} downloaded")
+        layout = QVBoxLayout(self)
+
+        # Overall progress section
+        layout.addWidget(QLabel("Overall Progress"))
         self._total_bar = QProgressBar()
         self._total_bar.setRange(0, total_tracks)
         self._total_bar.setValue(0)
-
-        self._current_label = QLabel("Preparing...")
-        self._current_bar = QProgressBar()
-        self._current_bar.setRange(0, 1)
-        self._current_bar.setValue(0)
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Queue progress"))
         layout.addWidget(self._total_bar)
+
+        self._total_label = QLabel(f"0 / {total_tracks} downloaded")
         layout.addWidget(self._total_label)
-        layout.addWidget(QLabel("Current file"))
-        layout.addWidget(self._current_bar)
-        layout.addWidget(self._current_label)
+
+        # Add spacing
+        layout.addSpacing(10)
+
+        # Individual worker progress bars
+        self._worker_bars: list[QProgressBar] = []
+        self._worker_labels: list[QLabel] = []
+
+        for i in range(MAX_CONCURRENT_DOWNLOADS):
+            layout.addWidget(QLabel(f"Worker {i + 1}"))
+
+            worker_bar = QProgressBar()
+            worker_bar.setRange(0, 1)
+            worker_bar.setValue(0)
+            self._worker_bars.append(worker_bar)
+            layout.addWidget(worker_bar)
+
+            worker_label = QLabel("Idle")
+            worker_label.setStyleSheet("color: gray;")
+            self._worker_labels.append(worker_label)
+            layout.addWidget(worker_label)
+
+            if i < MAX_CONCURRENT_DOWNLOADS - 1:
+                layout.addSpacing(5)
 
     def start_track(self, track: Track) -> None:
-        self._current_label.setText(_format_queue_entry(track))
-        self._current_bar.setValue(0)
-        self._current_bar.setMaximum(1)
         QApplication.processEvents()
 
     def report_current_progress(self, downloaded: int, total: int) -> None:
-        maximum = max(total, 1)
-        self._current_bar.setMaximum(maximum)
-        self._current_bar.setValue(min(downloaded, maximum))
         QApplication.processEvents()
 
     def track_completed(self, completed: int) -> None:
@@ -308,8 +397,72 @@ class DownloadProgressDialog(QDialog):
         self._total_label.setText(f"{completed} / {self._total_tracks} downloaded")
         QApplication.processEvents()
 
+    # Thread-safe versions that use QMetaObject.invokeMethod
+    def start_track_safe(self, track: Track, worker_id: int) -> None:
+        if 0 <= worker_id < len(self._worker_labels):
+            QMetaObject.invokeMethod(
+                self._worker_labels[worker_id],
+                "setText",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, _format_queue_entry(track))
+            )
+            QMetaObject.invokeMethod(
+                self._worker_bars[worker_id],
+                "setValue",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(int, 0)
+            )
+
+    def report_current_progress_safe(self, downloaded: int, total: int, worker_id: int) -> None:
+        if 0 <= worker_id < len(self._worker_bars):
+            maximum = max(total, 1)
+            QMetaObject.invokeMethod(
+                self._worker_bars[worker_id],
+                "setMaximum",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(int, maximum)
+            )
+            QMetaObject.invokeMethod(
+                self._worker_bars[worker_id],
+                "setValue",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(int, min(downloaded, maximum))
+            )
+
+    def track_completed_safe(self, completed: int, worker_id: int) -> None:
+        # Update overall progress
+        QMetaObject.invokeMethod(
+            self._total_bar,
+            "setValue",
+            Qt.ConnectionType.QueuedConnection,
+            Q_ARG(int, completed)
+        )
+        QMetaObject.invokeMethod(
+            self._total_label,
+            "setText",
+            Qt.ConnectionType.QueuedConnection,
+            Q_ARG(str, f"{completed} / {self._total_tracks} downloaded")
+        )
+
+        # Reset worker to idle
+        if 0 <= worker_id < len(self._worker_labels):
+            QMetaObject.invokeMethod(
+                self._worker_labels[worker_id],
+                "setText",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, "Idle")
+            )
+            QMetaObject.invokeMethod(
+                self._worker_bars[worker_id],
+                "setValue",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(int, 0)
+            )
+
 
 class PlaylistHeaderWidget(QWidget):
+    download_requested = Signal()
+
     def __init__(self) -> None:
         super().__init__()
         layout = QHBoxLayout(self)
@@ -336,9 +489,13 @@ class PlaylistHeaderWidget(QWidget):
         self._desc = QLabel()
         self._desc.setWordWrap(True)
 
+        self._download_button = QPushButton("Download Playlist")
+        self._download_button.clicked.connect(self.download_requested.emit)
+
         text_container.addWidget(self._title)
         text_container.addWidget(self._meta)
         text_container.addWidget(self._desc)
+        text_container.addWidget(self._download_button)
         layout.addLayout(text_container)
 
     def render(self, playlist: Playlist, **kwargs) -> None:

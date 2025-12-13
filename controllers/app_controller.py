@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Callable, Iterable, Sequence
 
+from config import MAX_CONCURRENT_DOWNLOADS
 from models.download_queue import DownloadQueue
 from models.playlist import Playlist
 from models.track import Track
@@ -16,9 +19,9 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class DownloadCallbacks:
-    track_started: Callable[[Track, int, int], None] | None = None
-    track_progress: ProgressCallback | None = None
-    track_completed: Callable[[int, int], None] | None = None
+    track_started: Callable[[Track, int, int, int], None] | None = None  # track, completed, total, worker_id
+    track_progress: Callable[[int, int, int], None] | None = None  # downloaded, total, worker_id
+    track_completed: Callable[[int, int, int], None] | None = None  # completed, total, worker_id
 
 
 class AppController:
@@ -75,20 +78,94 @@ class AppController:
         callbacks = callbacks or DownloadCallbacks()
         total = len(tracks)
         completed = 0
+        worker_id = 0  # Single-threaded downloads use worker 0
         for track in tracks:
             if callbacks.track_started:
-                callbacks.track_started(track, completed, total)
+                callbacks.track_started(track, completed, total, worker_id)
+
+            def progress_wrapper(downloaded: int, total_bytes: int) -> None:
+                if callbacks.track_progress:
+                    callbacks.track_progress(downloaded, total_bytes, worker_id)
+
             # noinspection PyBroadException
             try:
                 self._download_service.download_track(
                     track,
                     self._download_dir,
-                    progress_callback=callbacks.track_progress,
+                    progress_callback=progress_wrapper,
                 )
             except Exception:
                 logger.exception("failed to download track %s", track.title)
             finally:
                 completed += 1
                 if callbacks.track_completed:
-                    callbacks.track_completed(completed, total)
+                    callbacks.track_completed(completed, total, worker_id)
         self._queue.clear()
+
+    def download_tracks_parallel(
+        self,
+        tracks: list[Track],
+        destination: Path,
+        callbacks: DownloadCallbacks | None = None,
+        max_workers: int = MAX_CONCURRENT_DOWNLOADS,
+    ) -> None:
+        if not tracks:
+            return
+
+        callbacks = callbacks or DownloadCallbacks()
+        total = len(tracks)
+        completed = 0
+        lock = Lock()
+        worker_id_counter = 0
+
+        def download_single(track: Track, track_index: int) -> None:
+            nonlocal completed, worker_id_counter
+
+            # assign worker ID
+            with lock:
+                worker_id = worker_id_counter % max_workers
+                worker_id_counter += 1
+                current_completed = completed
+
+            # notify track started
+            if callbacks.track_started:
+                callbacks.track_started(track, current_completed, total, worker_id)
+
+            # dl the track with progress callback that includes worker_id
+            def progress_wrapper(downloaded: int, total_bytes: int) -> None:
+                if callbacks.track_progress:
+                    callbacks.track_progress(downloaded, total_bytes, worker_id)
+
+            # noinspection PyBroadException
+            try:
+                self._download_service.download_track(
+                    track,
+                    destination,
+                    progress_callback=progress_wrapper,
+                )
+            except Exception:
+                logger.exception("failed to download track %s", track.title)
+
+            # notify track completed
+            with lock:
+                completed += 1
+                current_completed = completed
+            if callbacks.track_completed:
+                callbacks.track_completed(current_completed, total, worker_id)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(download_single, track, idx) for idx, track in enumerate(tracks)]
+            # wait for all dls to complete
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception:
+                    logger.exception("download task failed")
+
+    def download_queue_parallel(self, callbacks: DownloadCallbacks | None = None, max_workers: int = MAX_CONCURRENT_DOWNLOADS) -> None:
+        tracks = self._queue.all_tracks()
+        if not tracks:
+            return
+        self.download_tracks_parallel(tracks, self._download_dir, callbacks, max_workers)
+        self._queue.clear()
+

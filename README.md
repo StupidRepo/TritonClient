@@ -44,9 +44,9 @@ A (probably) cross-platform PySide6 GUI app for interacting with the [triton.squ
 - To download all music in a playlist:
     1. Find the playlist.
     2. Double-click it to open it.
-    3. Click on the first track, and then press `Ctrl + A` (or `Cmd + A` on Mac) to select all tracks.
-    4. Click "Add selected to Queue".
-    5. Proceed to download the queue as usual.
+    3. Click on "Download Playlist".
+    4. Playlist will automatically start downloading to your `Downloads` folder in a subfolder named after the playlist.
+- Make sure FFMPEG is correctly installed and accessible via PATH for proper audio processing.
 
 ## Screenshots
 | Title                                | Image                                                           |
