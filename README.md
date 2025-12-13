@@ -1,5 +1,5 @@
-# Triton Client
-A PySide6 GUI app for interacting with the [triton.squid.wtf](https://triton.squid.wtf/) API, to enjoy high-quality music.
+# Triton GUI Client
+A (probably) cross-platform PySide6 GUI app for interacting with the [triton.squid.wtf](https://triton.squid.wtf/) API, to enjoy high-quality music offline.
 
 ## Features
 - [ ] Searching
