@@ -83,9 +83,8 @@ class AppController:
         callbacks = callbacks or DownloadCallbacks()
         total = len(tracks)
         completed = 0
-        worker_id = 0  # Single-threaded downloads use worker 0
+        worker_id = 0
         for track in tracks:
-            # Check for cancellation
             if callbacks.is_cancelled and callbacks.is_cancelled():
                 break
 

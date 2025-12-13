@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Callable
+import re
 
 from PySide6.QtCore import Slot, Qt, Signal, QMetaObject, Q_ARG, QThread
 from PySide6.QtWidgets import (
@@ -164,7 +165,6 @@ class MainWindow(QWidget):
             return
         dialog = DownloadProgressDialog(total_tracks=self.controller.queue_size(), parent=self)
 
-        # Create worker thread for downloading
         worker = DownloadWorker(lambda: self._download_queue_tracks(progress_dialog=dialog))
         worker.finished.connect(lambda: self._on_download_finished(dialog))
         worker.error_occurred.connect(lambda error: self._on_download_error(error, dialog))
@@ -267,20 +267,14 @@ class MainWindow(QWidget):
         if not self._current_playlist or not self._current_playlist_tracks:
             return
 
-        # Create a subdirectory for the playlist
-        import re
-
-        # Sanitize playlist title for use as a directory name
         safe_title = re.sub(r'[\\/:*?"<>|]+', '', self._current_playlist.title).strip()
         if not safe_title:
             safe_title = "Playlist"
 
         playlist_dir = self.controller.download_dir / safe_title
 
-        # Show progress dialog
         dialog = DownloadProgressDialog(total_tracks=len(self._current_playlist_tracks), parent=self)
 
-        # Download tracks in parallel
         def _start(track: Track, completed: int, total: int, worker_id: int) -> None:
             dialog.start_track_safe(track, worker_id)
 
@@ -306,13 +300,12 @@ class MainWindow(QWidget):
                 max_workers=MAX_CONCURRENT_DOWNLOADS,
             )
 
-        # Create worker thread for downloading
         worker = DownloadWorker(_download)
         worker.finished.connect(dialog.accept)
 
         dialog.show()
         worker.start()
-        dialog.exec()  # Block until dialog is closed
+        dialog.exec()
 
     @Slot(Album)
     def on_album_selected(self, album: Album) -> None:
@@ -337,20 +330,14 @@ class MainWindow(QWidget):
         if not self._current_album or not self._current_album_tracks:
             return
 
-        # Create a subdirectory for the album
-        import re
-
-        # Sanitize album title for use as a directory name
         safe_title = re.sub(r'[\\/:*?"<>|]+', '', self._current_album.title).strip()
         if not safe_title:
             safe_title = "Album"
 
         album_dir = self.controller.download_dir / safe_title
 
-        # Show progress dialog
         dialog = DownloadProgressDialog(total_tracks=len(self._current_album_tracks), parent=self)
 
-        # Download tracks in parallel
         def _start(track: Track, completed: int, total: int, worker_id: int) -> None:
             dialog.start_track_safe(track, worker_id)
 
@@ -376,13 +363,12 @@ class MainWindow(QWidget):
                 max_workers=MAX_CONCURRENT_DOWNLOADS,
             )
 
-        # Create worker thread for downloading
         worker = DownloadWorker(_download)
         worker.finished.connect(dialog.accept)
 
         dialog.show()
         worker.start()
-        dialog.exec()  # Block until dialog is closed
+        dialog.exec()
 
     def _refresh_add_button_label(self) -> None:
         target_list = self._active_track_list()
@@ -458,9 +444,8 @@ class QueueDialog(QDialog):
 
 
 class DownloadWorker(QThread):
-    """Background thread for downloading tracks."""
     finished = Signal()
-    error_occurred = Signal(str)  # Emits error message
+    error_occurred = Signal(str)
 
     def __init__(self, download_func: Callable[[], None]) -> None:
         super().__init__()
@@ -505,7 +490,6 @@ class DownloadProgressDialog(QDialog):
         self._total_tracks = total_tracks
         self._cancelled = False
 
-        # Disable the close button (X)
         self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
 
         layout = QVBoxLayout(self)
@@ -520,14 +504,12 @@ class DownloadProgressDialog(QDialog):
         self._total_label = QLabel(f"0 / {total_tracks} downloaded")
         layout.addWidget(self._total_label)
 
-        # Add spacing
         layout.addSpacing(10)
 
-        # Individual worker progress bars
         self._worker_bars: list[QProgressBar] = []
         self._worker_labels: list[QLabel] = []
-        self._worker_last_progress: list[int] = []  # Track last progress value for each worker
-        self._worker_last_maximum: list[int] = []  # Track last maximum value for each worker
+        self._worker_last_progress: list[int] = []
+        self._worker_last_maximum: list[int] = []
 
         for i in range(MAX_CONCURRENT_DOWNLOADS):
             layout.addWidget(QLabel(f"Worker {i + 1}"))
