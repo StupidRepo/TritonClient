@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from utils.payload_helpers import extract_artist_names, safe_str_id
+from models.track import TrackArtist
+from utils.payload_helpers import safe_str_id
 
 
 @dataclass
@@ -14,13 +15,13 @@ class Album:
     cover_id: Optional[str]
     number_of_tracks: int
     release_date: str
-    artists: List[str]
+    artists: List[TrackArtist]
     explicit: bool
 
     @classmethod
     def from_search_payload(cls, payload: Dict[str, Any]) -> "Album":
         """Parse album from search results"""
-        artists = extract_artist_names(payload.get("artists", []))
+        artists = [TrackArtist.from_payload(artist) for artist in payload.get("artists", [])]
         album_id = safe_str_id(payload.get("id"))
 
         return cls(

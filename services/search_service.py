@@ -11,6 +11,17 @@ from models.track import Track
 logger = logging.getLogger(__name__)
 
 
+def _fetch_detail_payload(url: str, item_id: str, item_type: str) -> dict:
+    """Fetch detail payload with error handling."""
+    try:
+        resp = requests.get(f"{url}/?id={item_id}", timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+    except requests.RequestException as exc:
+        logger.warning("%s detail fetch failed for %s", item_type, item_id, exc_info=exc)
+        return {}
+
+
 class SearchService:
     BASE_URL = "https://triton.squid.wtf/search"
     PLAYLIST_DETAILS_URL = "https://triton.squid.wtf/playlist"
@@ -47,18 +58,8 @@ class SearchService:
             return [Album.from_search_payload(item) for item in album_items]
         return items
 
-    def _fetch_detail_payload(self, url: str, item_id: str, item_type: str) -> dict:
-        """Fetch detail payload with error handling."""
-        try:
-            resp = requests.get(f"{url}/?id={item_id}", timeout=10)
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as exc:
-            logger.warning("%s detail fetch failed for %s", item_type, item_id, exc_info=exc)
-            return {}
-
     def fetch_playlist_detail(self, playlist_uuid: str) -> tuple[Playlist, list[Track]]:
-        payload = self._fetch_detail_payload(self.PLAYLIST_DETAILS_URL, playlist_uuid, "playlist")
+        payload = _fetch_detail_payload(self.PLAYLIST_DETAILS_URL, playlist_uuid, "playlist")
         if not payload:
             return Playlist(playlist_uuid, "", "", 0, None, 0, []), []
         playlist = Playlist.from_search_payload(payload)
@@ -66,7 +67,7 @@ class SearchService:
         return playlist, tracks
 
     def fetch_album_detail(self, album_id: str) -> tuple[Album, list[Track]]:
-        payload = self._fetch_detail_payload(self.ALBUM_DETAILS_URL, album_id, "album")
+        payload = _fetch_detail_payload(self.ALBUM_DETAILS_URL, album_id, "album")
         if not payload:
             return Album(album_id, "", 0, None, 0, "", [], False), []
         data = payload.get("data", {})

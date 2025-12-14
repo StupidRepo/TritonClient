@@ -18,7 +18,7 @@ class _AlbumItemWidget(BaseItemWidget):
         self.album = album
 
         self._create_title_label(album.title)
-        artist_text = ", ".join(album.artists) if album.artists else "Unknown Artist"
+        artist_text = ", ".join(artist.name for artist in album.artists)
         self._create_subtitle_label(artist_text, word_wrap=True)
 
         release_year = datetime.strptime(album.release_date, "%Y-%m-%d").year

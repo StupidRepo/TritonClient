@@ -91,9 +91,7 @@ class DownloadService:
         try:
             embed_metadata_with_ffmpeg(
                 target_file,
-                title=track.title,
-                album=track.album_title,
-                artists=track.artists,
+                track = track,
                 cover_id=track.cover_id,
             )
         except FfmpegUnavailableError:

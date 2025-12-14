@@ -28,7 +28,7 @@ if __name__ == "__main__":
         print(f"Retrieved {len(results)} track(s) in test mode")
         if results:
             first = results[0]
-            artists = ", ".join(first.artists)
+            artists = ", ".join(artist.name for artist in first.artists)
             print(f"Sample: {first.title} by {artists}")
     else:
         main()

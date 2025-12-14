@@ -8,7 +8,8 @@ from models.track import Track
 def _key(track: Track) -> str:
     if track.track_id:
         return track.track_id
-    artist_key = "-".join(track.artists) if track.artists else ""
+    # since track.artists is a list of TrackArtist, we need to extract their names
+    artist_key = "-".join(artist.name for artist in track.artists) if track.artists else ""
     return f"{track.title}-{artist_key}".strip()
 
 

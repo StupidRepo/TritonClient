@@ -169,6 +169,7 @@ class AppController:
             futures = [executor.submit(download_single, track, idx) for idx, track in enumerate(tracks)]
             # Wait for all downloads to complete
             for future in as_completed(futures):
+                # noinspection PyBroadException
                 try:
                     future.result()
                 except Exception:

@@ -3,22 +3,33 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from utils.payload_helpers import extract_artist_names
 
+@dataclass
+class TrackArtist:
+    artist_id: Optional[str]
+    name: str
+
+    @classmethod
+    def from_payload(cls, payload: Dict[str, Any]) -> "TrackArtist":
+        artist_id = payload.get("id")
+        return cls(
+            artist_id=str(artist_id) if artist_id is not None else None,
+            name=payload.get("name", "Unknown Artist"),
+        )
 
 @dataclass
 class Track:
     track_id: Optional[str]
     title: str
     duration: int | None
-    artists: List[str]
+    artists: List[TrackArtist]
     cover_id: str | None
     audio_tags: str | None
     album_title: str | None
 
     @classmethod
     def from_payload(cls, payload: Dict[str, Any]) -> "Track":
-        artists = extract_artist_names(payload.get("artists", []))
+        artists = [TrackArtist.from_payload(artist) for artist in payload.get("artists", [])]
         album = payload.get("album", {})
         cover_id = album.get("cover")
         track_id = payload.get("id")

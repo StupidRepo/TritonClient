@@ -95,7 +95,7 @@ class AlbumHeaderWidget(BaseHeaderWidget):
         self._title.setText(album.title)
         duration = format_duration(album.duration, long=True)
         self._meta.setText(f"{album.number_of_tracks} tracks • {duration}")
-        artists = ", ".join(album.artists) if album.artists else "Unknown Artist"
+        artists = ", ".join(artist.name for artist in album.artists) if album.artists else "Unknown Artist"
         year = album.release_date.split("-")[0] if album.release_date else ""
         artist_text = f"{artists}" + (f" • {year}" if year else "")
         self._artist.setText(artist_text)

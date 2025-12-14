@@ -6,10 +6,10 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Iterable
 
 import requests
 
+from models.track import Track
 from utils.cover import build_tidal_image_url
 
 logger = logging.getLogger(__name__)
@@ -23,9 +23,7 @@ class FfmpegUnavailableError(RuntimeError):
 def embed_metadata_with_ffmpeg(
     source: Path,
     *,
-    title: str,
-    album: str | None,
-    artists: Iterable[str],
+    track: Track,
     cover_id: str | None,
 ) -> None:
     if not source.exists():
@@ -36,10 +34,8 @@ def embed_metadata_with_ffmpeg(
     cover_path = _download_cover_art(cover_id)
     output_path = _temp_output_path(source)
     metadata_fields = {
-        "title": title,
-        "album": album,
-        "artist": ", ".join(artists) if artists else None,
-        "album_artist": artists[0] if artists else None,
+        "title": track.title,
+        "album": track.album_title,
     }
     cmd = [
         ffmpeg_bin,
@@ -74,6 +70,10 @@ def embed_metadata_with_ffmpeg(
     for key, value in metadata_fields.items():
         if value:
             cmd.extend(["-metadata", f"{key}={value}"])
+
+    for artist in track.artists:
+        cmd.extend(["-metadata", "artist=" + artist.name])
+
     cmd.append(str(output_path))
     try:
         subprocess.run(cmd, check=True)

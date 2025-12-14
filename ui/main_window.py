@@ -586,7 +586,6 @@ class DownloadProgressDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        # Overall progress section
         overall_label = QLabel("Overall Progress")
         overall_label.setStyleSheet("font-weight: bold;")
         layout.addWidget(overall_label)
@@ -601,40 +600,20 @@ class DownloadProgressDialog(QDialog):
 
         layout.addSpacing(16)
 
-        # Worker progress widgets
         self._workers: list[WorkerProgressWidget] = []
         for i in range(MAX_CONCURRENT_DOWNLOADS):
             worker_widget = WorkerProgressWidget(i, self)
             self._workers.append(worker_widget)
             layout.addWidget(worker_widget)
 
-            # layout.update()
-            # self.layout().update()
-
             if i < MAX_CONCURRENT_DOWNLOADS - 1:
                 layout.addSpacing(8)
 
-            # self.adjustSize()
-            #
-            # layout.activate()
-            # self.layout().activate()
-
-        # layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
-
-        # Cancel button
         layout.addSpacing(16)
         self._cancel_button = QPushButton("Cancel")
         self._cancel_button.clicked.connect(self._on_cancel_clicked)
         layout.addWidget(self._cancel_button)
 
-        # layout.update()
-        # self.layout().update()
-        #
-        # self.adjustSize()
-        # self.setSizePolicy(
-        #     QSizePolicy.Policy.Preferred,
-        #     QSizePolicy.Policy.Minimum
-        # )
         layout.setSizeConstraints(
             QLayout.SizeConstraint.SetMinimumSize,
             QLayout.SizeConstraint.SetFixedSize
