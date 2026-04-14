@@ -25,7 +25,6 @@ class DownloadCallbacks:
     track_completed: Callable[[int, int, int], None] | None = None  # completed, total, worker_id
     is_cancelled: Callable[[], bool] | None = None  # check if cancellation requested
 
-
 class AppController:
     def __init__(
         self,
@@ -37,7 +36,7 @@ class AppController:
         self._search_service = search_service or SearchService()
         self._download_service = download_service or DownloadService()
         self._queue = queue or DownloadQueue()
-        self._download_dir = download_dir or (Path.home() / "Downloads")
+        self._download_dir = download_dir or (Path.home() / "Downloads/_DOWNLOADED_MUSIC_IS_HERE")
 
     @property
     def download_dir(self) -> Path:
@@ -181,4 +180,3 @@ class AppController:
             return
         self.download_tracks_parallel(tracks, self._download_dir, callbacks, max_workers)
         self._queue.clear()
-

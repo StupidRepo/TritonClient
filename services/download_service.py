@@ -108,8 +108,7 @@ class DownloadService:
 
     def _build_filename(self, track: Track) -> str:
         artist = track.artists[0] if track.artists else "Unknown Artist"
-        candidate = f"{artist} - {track.title}".strip()
+        candidate = f"{artist.name if hasattr(artist, "name") else str(artist)} - {track.title}".strip()
         safe_name = self._INVALID_FILENAME_RE.sub("", candidate)
         safe_name = safe_name.strip() or "track"
         return f"{safe_name}.flac"
-
