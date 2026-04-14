@@ -36,7 +36,7 @@ class AppController:
         self._search_service = search_service or SearchService()
         self._download_service = download_service or DownloadService()
         self._queue = queue or DownloadQueue()
-        self._download_dir = download_dir or (Path.home() / "Downloads/_DOWNLOADED_MUSIC_IS_HERE")
+        self._download_dir = download_dir or (Path.home() / "Downloads/_TritonMusic")
 
     @property
     def download_dir(self) -> Path:

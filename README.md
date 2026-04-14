@@ -37,7 +37,7 @@ A (probably) cross-platform PySide6 GUI app for interacting with the [triton.squ
     - Shift-clicking works too, to select multiple tracks.
 6. Click "Add selected to Queue" to add selected tracks to the playback queue.
 7. When done selecting tracks, click "Show Queue" and then "Download Queue" to download all queued tracks.
-8. Downloaded tracks will be saved in the user's `Downloads` folder with proper metadata and cover art.
+8. Downloaded tracks will be saved in the `Downloads/_TritonMusic` folder with proper metadata and cover art.
 9. Enjoy your music!
 
 ## Notes
